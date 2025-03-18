@@ -427,6 +427,8 @@ class GEOS5FPConnection:
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
 
+        ## FIXME need to check local filesystem for existing files here first before searching remote
+
         search_date = time_UTC.date()
         logger.info(f"searching GEOS-5 FP {cl.name(product)} at " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M:%S} UTC"))
 
