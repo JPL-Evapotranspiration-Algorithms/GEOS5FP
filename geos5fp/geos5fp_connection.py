@@ -330,6 +330,16 @@ class GEOS5FPConnection:
             logger.warning(f"removing previously created zero-size corrupted GEOS-5 FP file: {filename}")
             os.remove(filename)
 
+        if exists(filename):
+            granule = GEOS5FPGranule(
+                filename=filename,
+                working_directory=self.working_directory,
+                products_directory=self.products_directory,
+                save_products=self.save_products
+            )
+
+            return granule
+
         while retries > 0:
             retries -= 1
 
