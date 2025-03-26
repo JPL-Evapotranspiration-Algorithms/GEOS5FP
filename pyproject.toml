@@ -15,23 +15,35 @@ classifiers = [
 ]
 dependencies = [
     "affine",
+    "beautifulsoup4",
     "colored-logging",
+    "earthaccess",
     "geopandas",
+    "matplotlib",
     "numpy",
-    "pyproj",
-    "rasterio",
-    "scipy",
-    "shapely",
     "pandas",
+    "pyproj",
+    "python-dateutil",
+    "rasterio",
     "rasters",
     "requests",
-    "beautifulsoup4",
-    "python-dateutil",
-    "matplotlib",
+    "scipy",
+    "sentinel-tiles",
+    "shapely",
     "urllib3"
 ]
 
 requires-python = ">=3.10"
+
+[project.optional-dependencies]
+dev = [
+    "build",
+    "pytest>=6.0",
+    "pytest-cov",
+    "jupyter",
+    "pytest",
+    "twine"
+]
 
 [tool.setuptools.package-data]
 geos5fp = ["*.txt"]

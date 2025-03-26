@@ -10,6 +10,7 @@ from time import sleep
 from typing import List, Union, Any
 import posixpath
 import colored_logging as cl
+import earthaccess
 import numpy as np
 import pandas as pd
 import rasterio
@@ -48,20 +49,9 @@ class GEOS5FPConnection:
         logger.info(f"GEOS-5 FP working directory: {cl.dir(working_directory)}")
 
         if download_directory is None:
-            download_directory = join(working_directory, DEFAULT_DOWNLOAD_DIRECTORY)
-
-        if download_directory.startswith("~"):
-            download_directory = expanduser(download_directory)
+            download_directory = DEFAULT_DOWNLOAD_DIRECTORY
 
         logger.info(f"GEOS-5 FP download directory: {cl.dir(download_directory)}")
-
-        if products_directory is None:
-            products_directory = join(working_directory, DEFAULT_PRODUCTS_DIRECTORY)
-
-        if products_directory.startswith("~"):
-            products_directory = expanduser(products_directory)
-
-        logger.info(f"GEOS-5 FP products directory: {cl.dir(products_directory)}")
 
         if remote is None:
             remote = self.DEFAULT_URL_BASE
@@ -326,104 +316,89 @@ class GEOS5FPConnection:
         if filename is None:
             filename = self.download_filename(URL)
 
-        if exists(filename) and getsize(filename) == 0:
-            logger.warning(f"removing previously created zero-size corrupted GEOS-5 FP file: {filename}")
-            os.remove(filename)
+        expanded_filename = os.path.expanduser(filename)
 
-        if exists(filename):
-            granule = GEOS5FPGranule(
+        if exists(expanded_filename) and getsize(expanded_filename) == 0:
+            logger.warning(f"removing previously created zero-size corrupted GEOS-5 FP file: {filename}")
+            os.remove(expanded_filename)
+
+        if exists(expanded_filename):
+            return GEOS5FPGranule(
                 filename=filename,
                 working_directory=self.working_directory,
                 products_directory=self.products_directory,
                 save_products=self.save_products
             )
 
-            return granule
-
         while retries > 0:
             retries -= 1
-
             try:
                 if requests.head(URL).status_code == 404:
                     directory_URL = posixpath.dirname(URL)
-
                     if requests.head(directory_URL).status_code == 404:
                         raise GEOS5FPDayNotAvailable(f"GEOS-5 FP day not available: {directory_URL}")
                     else:
                         raise GEOS5FPGranuleNotAvailable(f"GEOS-5 FP granule not available: {URL}")
 
-                if exists(filename):
+                if exists(expanded_filename):
                     try:
                         with warnings.catch_warnings():
                             warnings.simplefilter("ignore")
-
-                            with rasterio.open(filename, "r") as file:
+                            with rasterio.open(expanded_filename, "r") as file:
                                 pass
                     except Exception as e:
                         logger.exception(f"unable to open GEOS-5 FP file: {filename}")
                         logger.warning(f"removing corrupted GEOS-5 FP file: {filename}")
-                        os.remove(filename)
+                        os.remove(expanded_filename)
 
-                if exists(filename):
+                if exists(expanded_filename):
                     logger.info(f"GEOS-5 FP file found: {cl.file(filename)}")
                 else:
                     logger.info(f"downloading GEOS-5 FP: {cl.URL(URL)} -> {cl.file(filename)}")
-                    makedirs(dirname(filename), exist_ok=True)
+                    makedirs(os.path.dirname(expanded_filename), exist_ok=True)
                     partial_filename = f"{filename}.{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.download"
+                    expanded_partial_filename = os.path.expanduser(partial_filename)
 
-                    if exists(partial_filename) and getsize(partial_filename) == 0:
+                    if exists(expanded_partial_filename) and getsize(expanded_partial_filename) == 0:
                         logger.warning(f"removing zero-size corrupted GEOS-5 FP file: {partial_filename}")
-                        os.remove(partial_filename)
+                        os.remove(expanded_partial_filename)
 
-                    command = f'wget -c -O "{partial_filename}" "{URL}"'
-                    # logger.info(command)
                     timer = Timer()
-                    os.system(command)
+                    earthaccess.download(URL, expanded_partial_filename)
 
-                    if not exists(partial_filename):
-                        raise IOError(f"unable to download URL: {URL}")
+                    if not exists(expanded_partial_filename) or getsize(expanded_partial_filename) == 0:
+                        logger.warning(f"download failed or resulted in zero-size file: {partial_filename}")
+                        raise FailedGEOS5FPDownload(f"Failed to download GEOS-5 FP: {URL}")
 
-                    if not exists(partial_filename):
-                        raise FailedGEOS5FPDownload(f"GEOS-5 FP partial download file not found: {URL} -> {partial_filename}")
-                    elif exists(partial_filename) and getsize(partial_filename) == 0:
-                        logger.warning(f"removing zero-size corrupted GEOS-5 FP file: {partial_filename}")
-                        os.remove(partial_filename)
-                        raise FailedGEOS5FPDownload(f"zero-size file from GEOS-5 FP download: {URL} -> {partial_filename}")
-
-                    move(partial_filename, filename)
-
-                    if not exists(filename):
-                        raise FailedGEOS5FPDownload(f"GEOS-5 FP final download file not found: {URL} -> {filename}")
+                    move(expanded_partial_filename, expanded_filename)
 
                     try:
-                        with rasterio.open(filename, "r") as file:
+                        with rasterio.open(expanded_filename, "r") as file:
                             pass
                     except Exception as e:
                         logger.exception(f"unable to open GEOS-5 FP file: {filename}")
                         logger.warning(f"removing corrupted GEOS-5 FP file: {filename}")
-                        os.remove(filename)
+                        os.remove(expanded_filename)
                         raise FailedGEOS5FPDownload(f"GEOS-5 FP corrupted download: {URL} -> {filename}")
 
-                    logger.info("GEOS-5 FP download completed: " + cl.file(filename) + " (" + cl.val(
-                        f"{(getsize(filename) / 1000000):0.2f}") + " mb) (" + cl.time(timer.duration) + " seconds)")
+                    logger.info(f"GEOS-5 FP download completed: {cl.file(filename)} ({(getsize(expanded_filename) / 1000000):0.2f} MB) ({cl.time(timer.duration)} seconds)")
 
-                granule = GEOS5FPGranule(
+                return GEOS5FPGranule(
                     filename=filename,
                     working_directory=self.working_directory,
                     products_directory=self.products_directory,
                     save_products=self.save_products
                 )
-
-                return granule
-
+            
             except Exception as e:
                 if retries == 0:
                     raise e
 
                 logger.warning(e)
-                logger.warning(f"waiting {wait_seconds} for M2M retry")
+                logger.warning(f"waiting {wait_seconds} seconds for retry")
                 sleep(wait_seconds)
                 continue
+
 
     def before_and_after(
             self,
