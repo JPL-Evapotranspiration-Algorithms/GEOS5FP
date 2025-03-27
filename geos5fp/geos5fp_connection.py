@@ -3,14 +3,13 @@ import logging
 import os
 import warnings
 from datetime import date, datetime, timedelta, time
-from os import path, makedirs
-from os.path import expanduser, join, exists, getsize, dirname
+from os import makedirs
+from os.path import expanduser, exists, getsize
 from shutil import move
 from time import sleep
 from typing import List, Union, Any
 import posixpath
 import colored_logging as cl
-import earthaccess
 import numpy as np
 import pandas as pd
 import rasterio
@@ -363,12 +362,20 @@ class GEOS5FPConnection:
                         logger.warning(f"removing zero-size corrupted GEOS-5 FP file: {partial_filename}")
                         os.remove(expanded_partial_filename)
 
+                    command = f'wget -c -O "{partial_filename}" "{URL}"'
+                    # logger.info(command)
                     timer = Timer()
-                    earthaccess.download(URL, expanded_partial_filename)
+                    os.system(command)
 
-                    if not exists(expanded_partial_filename) or getsize(expanded_partial_filename) == 0:
-                        logger.warning(f"download failed or resulted in zero-size file: {partial_filename}")
-                        raise FailedGEOS5FPDownload(f"Failed to download GEOS-5 FP: {URL}")
+                    if not exists(expanded_partial_filename):
+                        raise IOError(f"unable to download URL: {URL}")
+
+                    if not exists(expanded_partial_filename):
+                        raise FailedGEOS5FPDownload(f"GEOS-5 FP partial download file not found: {URL} -> {partial_filename}")
+                    elif exists(expanded_partial_filename) and getsize(expanded_partial_filename) == 0:
+                        logger.warning(f"removing zero-size corrupted GEOS-5 FP file: {partial_filename}")
+                        os.remove(expanded_partial_filename)
+                        raise FailedGEOS5FPDownload(f"zero-size file from GEOS-5 FP download: {URL} -> {partial_filename}")
 
                     move(expanded_partial_filename, expanded_filename)
 
@@ -383,13 +390,15 @@ class GEOS5FPConnection:
 
                     logger.info(f"GEOS-5 FP download completed: {cl.file(filename)} ({(getsize(expanded_filename) / 1000000):0.2f} MB) ({cl.time(timer.duration)} seconds)")
 
-                return GEOS5FPGranule(
+                granule = GEOS5FPGranule(
                     filename=filename,
                     working_directory=self.working_directory,
                     products_directory=self.products_directory,
                     save_products=self.save_products
                 )
-            
+
+                return granule
+
             except Exception as e:
                 if retries == 0:
                     raise e
@@ -398,7 +407,6 @@ class GEOS5FPConnection:
                 logger.warning(f"waiting {wait_seconds} seconds for retry")
                 sleep(wait_seconds)
                 continue
-
 
     def before_and_after(
             self,
@@ -880,16 +888,6 @@ class GEOS5FPConnection:
 
         return self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
 
-    # def SVP_mb(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
-    #     # https://cran.r-project.org/web/packages/humidity/vignettes/humidity-measures.html
-    #     Rw = 461.52  # J/(kgK)
-    #     T0 = 273.15  # K
-    #     L = 2.5 * 10 ** 6  # J/kg
-    #     Ta_K = self.Ta_K(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-    #     SVP_mb = 6.11 * np.exp((L / Rw) * ((1 / T0) - (1 / Ta_K)))
-    #
-    #     return SVP_mb
-
     def SVP_Pa(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         Ta_C = self.Ta_C(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         SVP_Pa = 0.6108 * np.exp((17.27 * Ta_C) / (Ta_C + 237.3)) * 1000  # [Pa]
@@ -1032,90 +1030,6 @@ class GEOS5FPConnection:
         VPD_kPa = VPD_Pa / 1000
 
         return VPD_kPa
-
-    # def RH(
-    #         self,
-    #         time_UTC: datetime,
-    #         geometry: RasterGeometry = None,
-    #         SM: Raster = None,
-    #         ST_K: Raster = None,
-    #         water: Raster = None,
-    #         coarse_geometry: RasterGeometry = None,
-    #         coarse_cell_size_meters: int = DEFAULT_COARSE_CELL_SIZE_METERS,
-    #         resampling: str = None,
-    #         upsampling: str = None,
-    #         downsampling: str = None,
-    #         apply_bias: bool = True,
-    #         return_scale_and_bias: bool = False) -> Raster:
-    #
-    #     if SM is None:
-    #         Q = self.Q(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-    #         Ps_Pa = self.PS(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-    #         SVP_Pa = self.SVP_Pa(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-    #         Mw = 18.015268  # g / mol
-    #         Md = 28.96546e-3  # kg / mol
-    #         epsilon = Mw / (Md * 1000)
-    #         w = Q / (1 - Q)
-    #         ws = epsilon * SVP_Pa / (Ps_Pa - SVP_Pa)
-    #         RH = rt.clip(w / ws, 0, 1)
-    #     else:
-    #         if geometry is None:
-    #             geometry = SM.geometry
-    #
-    #         if coarse_geometry is None:
-    #             coarse_geometry = geometry.rescale(coarse_cell_size_meters)
-    #
-    #         RH_coarse = self.RH(time_UTC=time_UTC, geometry=coarse_geometry, resampling=resampling)
-    #
-    #         # if water is not None:
-    #         #     SM = rt.where(water, 1, SM)
-    #         scale = None
-    #         bias = None
-    #
-    #         if return_scale_and_bias:
-    #             RH, scale, bias = linear_downscale(
-    #                 coarse_image=RH_coarse,
-    #                 fine_image=SM,
-    #                 upsampling=upsampling,
-    #                 downsampling=downsampling,
-    #                 apply_bias=apply_bias,
-    #                 return_scale_and_bias=True
-    #             )
-    #         else:
-    #             RH = linear_downscale(
-    #                 coarse_image=RH_coarse,
-    #                 fine_image=SM,
-    #                 upsampling=upsampling,
-    #                 downsampling=downsampling,
-    #                 apply_bias=apply_bias,
-    #                 return_scale_and_bias=False
-    #             )
-    #
-    #         if water is not None:
-    #             if ST_K is not None:
-    #                 ST_K_water = rt.where(water, ST_K, np.nan)
-    #                 RH_coarse_complement = 1 - RH_coarse
-    #                 RH_complement_water = linear_downscale(
-    #                     coarse_image=RH_coarse_complement,
-    #                     fine_image=ST_K_water,
-    #                     upsampling=upsampling,
-    #                     downsampling=downsampling,
-    #                     apply_bias=apply_bias,
-    #                     return_scale_and_bias=False
-    #                 )
-    #
-    #                 RH_water = 1 - RH_complement_water
-    #                 RH = rt.where(water, RH_water, RH)
-    #             else:
-    #                 RH_smooth = self.RH(time_UTC=time_UTC, geometry=geometry, resampling="linear")
-    #                 RH = rt.where(water, RH_smooth, RH)
-    #
-    #     RH = rt.clip(RH, 0, 1)
-    #
-    #     if return_scale_and_bias:
-    #         return RH, scale, bias
-    #     else:
-    #         return RH
 
     def RH(
             self,
