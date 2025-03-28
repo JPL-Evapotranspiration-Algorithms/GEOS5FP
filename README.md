@@ -1,4 +1,4 @@
-# `geos5fp` Python Package
+# `GEOS5FP` Python Package
 
 [![CI](https://github.com/JPL-Evapotranspiration-Algorithms/geos5fp/actions/workflows/ci.yml/badge.svg)](https://github.com/JPL-Evapotranspiration-Algorithms/geos5fp/actions/workflows/ci.yml)
 
