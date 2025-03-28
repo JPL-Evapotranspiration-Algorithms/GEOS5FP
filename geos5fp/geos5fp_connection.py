@@ -36,7 +36,6 @@ class GEOS5FPConnection:
             self,
             working_directory: str = None,
             download_directory: str = None,
-            products_directory: str = None,
             remote: str = None,
             save_products: bool = False):
         if working_directory is None:
@@ -57,7 +56,6 @@ class GEOS5FPConnection:
 
         self.working_directory = working_directory
         self.download_directory = download_directory
-        self.products_directory = products_directory
         self.remote = remote
         self._listings = {}
         self.filenames = set([])
@@ -66,8 +64,7 @@ class GEOS5FPConnection:
     def __repr__(self):
         display_dict = {
             "URL": self.remote,
-            "download_directory": self.download_directory,
-            "products_directory": self.products_directory
+            "download_directory": self.download_directory
         }
 
         display_string = json.dumps(display_dict, indent=2)
@@ -322,12 +319,7 @@ class GEOS5FPConnection:
             os.remove(expanded_filename)
 
         if exists(expanded_filename):
-            return GEOS5FPGranule(
-                filename=filename,
-                working_directory=self.working_directory,
-                products_directory=self.products_directory,
-                save_products=self.save_products
-            )
+            return GEOS5FPGranule(filename)
 
         while retries > 0:
             retries -= 1
@@ -362,9 +354,10 @@ class GEOS5FPConnection:
                         logger.warning(f"removing zero-size corrupted GEOS-5 FP file: {partial_filename}")
                         os.remove(expanded_partial_filename)
 
-                    command = f'wget -c -O "{partial_filename}" "{URL}"'
+                    command = f'wget -c -O "{expanded_partial_filename}" "{URL}"'
                     # logger.info(command)
                     timer = Timer()
+                    logger.info(command)
                     os.system(command)
 
                     if not exists(expanded_partial_filename):
@@ -390,12 +383,7 @@ class GEOS5FPConnection:
 
                     logger.info(f"GEOS-5 FP download completed: {cl.file(filename)} ({(getsize(expanded_filename) / 1000000):0.2f} MB) ({cl.time(timer.duration)} seconds)")
 
-                granule = GEOS5FPGranule(
-                    filename=filename,
-                    working_directory=self.working_directory,
-                    products_directory=self.products_directory,
-                    save_products=self.save_products
-                )
+                granule = GEOS5FPGranule(filename)
 
                 return granule
 
