@@ -1,4 +1,4 @@
-from .geos5fp import *
+from .geos5fp_temp import *
 from os.path import join, abspath, dirname
 
 with open(join(abspath(dirname(__file__)), "version.txt")) as f:
