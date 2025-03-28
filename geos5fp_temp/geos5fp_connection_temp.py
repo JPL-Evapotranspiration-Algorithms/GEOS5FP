@@ -21,7 +21,7 @@ from rasters import Raster, RasterGeometry
 from .constants import *
 from .exceptions import *
 from .HTTP_listing import HTTP_listing
-from .geos5fp_granule import GEOS5FPGranule
+from .geos5fp_granule_temp import GEOS5FPGranule
 from .timer import Timer
 from .downscaling import linear_downscale, bias_correct
 
