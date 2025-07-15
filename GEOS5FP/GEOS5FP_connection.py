@@ -324,13 +324,6 @@ class GEOS5FPConnection:
         while retries > 0:
             retries -= 1
             try:
-                if requests.head(URL).status_code == 404:
-                    directory_URL = posixpath.dirname(URL)
-                    if requests.head(directory_URL).status_code == 404:
-                        raise GEOS5FPDayNotAvailable(f"GEOS-5 FP day not available: {directory_URL}")
-                    else:
-                        raise GEOS5FPGranuleNotAvailable(f"GEOS-5 FP granule not available: {URL}")
-
                 if exists(expanded_filename):
                     try:
                         with warnings.catch_warnings():
@@ -345,6 +338,14 @@ class GEOS5FPConnection:
                 if exists(expanded_filename):
                     logger.info(f"GEOS-5 FP file found: {cl.file(filename)}")
                 else:
+                    # Verify that the file exists at the remote
+                    if requests.head(URL).status_code == 404:
+                        directory_URL = posixpath.dirname(URL)
+                        if requests.head(directory_URL).status_code == 404:
+                            raise GEOS5FPDayNotAvailable(f"GEOS-5 FP day not available: {directory_URL}")
+                        else:
+                            raise GEOS5FPGranuleNotAvailable(f"GEOS-5 FP granule not available: {URL}")
+
                     logger.info(f"downloading GEOS-5 FP: {cl.URL(URL)} -> {cl.file(filename)}")
                     makedirs(os.path.dirname(expanded_filename), exist_ok=True)
                     partial_filename = f"{filename}.{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.download"
