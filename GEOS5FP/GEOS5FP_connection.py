@@ -7,7 +7,7 @@ from os import makedirs
 from os.path import expanduser, exists, getsize
 from shutil import move
 from time import sleep
-from typing import List, Union, Any
+from typing import List, Union, Any, Tuple
 import posixpath
 import colored_logging as cl
 import numpy as np
@@ -15,6 +15,7 @@ import pandas as pd
 import rasterio
 import rasters as rt
 import requests
+from tqdm.notebook import tqdm
 from dateutil import parser
 from rasters import Raster, RasterGeometry
 
@@ -34,17 +35,15 @@ class GEOS5FPConnection:
 
     def __init__(
             self,
-            working_directory: str = None,
+            # working_directory parameter removed
             download_directory: str = None,
             remote: str = None,
             save_products: bool = False):
-        if working_directory is None:
-            working_directory = DEFAULT_WORKING_DIRECTORY
+        # working_directory logic removed
 
-        if working_directory.startswith("~"):
-            working_directory = expanduser(working_directory)
+        # working_directory expansion logic removed
 
-        logger.info(f"GEOS-5 FP working directory: {cl.dir(working_directory)}")
+        # working_directory logging removed
 
         if download_directory is None:
             download_directory = DEFAULT_DOWNLOAD_DIRECTORY
@@ -54,7 +53,7 @@ class GEOS5FPConnection:
         if remote is None:
             remote = self.DEFAULT_URL_BASE
 
-        self.working_directory = working_directory
+        # self.working_directory assignment removed
         self.download_directory = download_directory
         self.remote = remote
         self._listings = {}
@@ -189,7 +188,7 @@ class GEOS5FPConnection:
 
     def http_listing(
             self,
-            date_UTC: datetime or str,
+            date_UTC: Union[datetime, str],
             product_name: str = None,
             timeout: float = None,
             retries: int = None) -> pd.DataFrame:
@@ -233,7 +232,7 @@ class GEOS5FPConnection:
 
     def generate_filenames(
             self,
-            date_UTC: datetime or str,
+            date_UTC: Union[datetime, str],
             product_name: str,
             interval: int,
             expected_hours: List[float] = None) -> pd.DataFrame:
@@ -274,7 +273,7 @@ class GEOS5FPConnection:
 
     def product_listing(
             self,
-            date_UTC: datetime or str,
+            date_UTC: Union[datetime, str],
             product_name: str,
             interval: int,
             expected_hours: List[float] = None,
@@ -355,18 +354,35 @@ class GEOS5FPConnection:
                         logger.warning(f"removing zero-size corrupted GEOS-5 FP file: {partial_filename}")
                         os.remove(expanded_partial_filename)
 
-                    command = f'wget -c -O "{expanded_partial_filename}" "{URL}"'
-                    # logger.info(command)
+                    # Download with requests and TQDM progress bar
                     timer = Timer()
-                    logger.info(command)
-                    os.system(command)
+                    logger.info(f"downloading with requests: {URL} -> {expanded_partial_filename}")
+                    try:
+                        response = requests.get(URL, stream=True)
+                        response.raise_for_status()
+                        total = int(response.headers.get('content-length', 0))
+                        with open(expanded_partial_filename, 'wb') as f, tqdm(
+                            desc=posixpath.basename(expanded_partial_filename),
+                            total=total,
+                            unit='B',
+                            unit_scale=True,
+                            unit_divisor=1024,
+                            leave=True
+                        ) as bar:
+                            for chunk in response.iter_content(chunk_size=1024*1024):
+                                if chunk:
+                                    f.write(chunk)
+                                    bar.update(len(chunk))
+                    except Exception as e:
+                        logger.exception(f"Download failed: {e}")
+                        if exists(expanded_partial_filename):
+                            os.remove(expanded_partial_filename)
+                        raise FailedGEOS5FPDownload(f"requests download failed: {URL} -> {partial_filename}")
 
                     if not exists(expanded_partial_filename):
                         raise IOError(f"unable to download URL: {URL}")
 
-                    if not exists(expanded_partial_filename):
-                        raise FailedGEOS5FPDownload(f"GEOS-5 FP partial download file not found: {URL} -> {partial_filename}")
-                    elif exists(expanded_partial_filename) and getsize(expanded_partial_filename) == 0:
+                    if exists(expanded_partial_filename) and getsize(expanded_partial_filename) == 0:
                         logger.warning(f"removing zero-size corrupted GEOS-5 FP file: {partial_filename}")
                         os.remove(expanded_partial_filename)
                         raise FailedGEOS5FPDownload(f"zero-size file from GEOS-5 FP download: {URL} -> {partial_filename}")
@@ -399,13 +415,13 @@ class GEOS5FPConnection:
 
     def before_and_after(
             self,
-            time_UTC: datetime or str,
+            time_UTC: Union[datetime, str],
             product: str,
             interval: int = None,
             expected_hours: List[float] = None,
             timeout: float = None,
             retries: int = None,
-            use_http_listing: bool = DEFAULT_USE_HTTP_LISTING) -> (datetime, Raster, datetime, Raster):
+            use_http_listing: bool = DEFAULT_USE_HTTP_LISTING) -> Tuple[datetime, Raster, datetime, Raster]:
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
 
@@ -455,7 +471,7 @@ class GEOS5FPConnection:
 
     def interpolate(
             self,
-            time_UTC: datetime or str,
+            time_UTC: Union[datetime, str],
             product: str,
             variable: str,
             geometry: RasterGeometry = None,
@@ -532,7 +548,8 @@ class GEOS5FPConnection:
 
         return interpolated_data
 
-    def SFMC(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+
+    def SFMC(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         top soil layer moisture content cubic meters per cubic meters
         :param time_UTC: date/time in UTC
@@ -540,6 +557,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
+
         NAME = "top layer soil moisture"
         PRODUCT = "tavg1_2d_lnd_Nx"
         VARIABLE = "SFMC"
@@ -564,7 +584,7 @@ class GEOS5FPConnection:
 
     SM = SFMC
 
-    def LAI(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def LAI(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         leaf area index
         :param time_UTC: date/time in UTC
@@ -572,6 +592,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of LAI
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "leaf area index"
         PRODUCT = "tavg1_2d_lnd_Nx"
         VARIABLE = "LAI"
@@ -593,7 +615,7 @@ class GEOS5FPConnection:
             cmap=NDVI_CMAP
         )
 
-    def NDVI(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def NDVI(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         normalized difference vegetation index
         :param time_UTC: date/time in UTC
@@ -601,12 +623,14 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of NDVI
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         LAI = self.LAI(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         NDVI = rt.clip(1.05 - np.exp(-0.5 * LAI), 0, 1)
 
         return NDVI
 
-    def LHLAND(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def LHLAND(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         latent heat flux in watts per square meter
         :param time_UTC: date/time in UTC
@@ -614,6 +638,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "latent heat flux land"
         PRODUCT = "tavg1_2d_lnd_Nx"
         VARIABLE = "LHLAND"
@@ -633,7 +659,7 @@ class GEOS5FPConnection:
             exclude_values=[1.e+15]
         )
 
-    def EFLUX(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def EFLUX(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         latent heat flux in watts per square meter
         :param time_UTC: date/time in UTC
@@ -641,6 +667,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "total latent energy flux"
         PRODUCT = "tavg1_2d_flx_Nx"
         VARIABLE = "EFLUX"
@@ -659,7 +687,7 @@ class GEOS5FPConnection:
             interval=1
         )
 
-    def PARDR(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def PARDR(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         Surface downward PAR beam flux in watts per square meter
         :param time_UTC: date/time in UTC
@@ -667,6 +695,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "PARDR"
         PRODUCT = "tavg1_2d_lnd_Nx"
         VARIABLE = "PARDR"
@@ -681,7 +711,7 @@ class GEOS5FPConnection:
 
         return image
 
-    def PARDF(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def PARDF(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         Surface downward PAR diffuse flux in watts per square meter
         :param time_UTC: date/time in UTC
@@ -689,6 +719,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "PARDF"
         PRODUCT = "tavg1_2d_lnd_Nx"
         VARIABLE = "PARDF"
@@ -703,7 +735,7 @@ class GEOS5FPConnection:
 
         return image
 
-    def AOT(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def AOT(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         aerosol optical thickness (AOT) extinction coefficient
         :param time_UTC: date/time in UTC
@@ -711,6 +743,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of AOT
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "AOT"
         PRODUCT = "tavg3_2d_aer_Nx"
         VARIABLE = "TOTEXTTAU"
@@ -732,7 +766,7 @@ class GEOS5FPConnection:
             expected_hours=EXPECTED_HOURS
         )
 
-    def COT(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def COT(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         cloud optical thickness (COT) extinction coefficient
         :param time_UTC: date/time in UTC
@@ -740,6 +774,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of COT
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "COT"
         PRODUCT = "tavg1_2d_rad_Nx"
         VARIABLE = "TAUTOT"
@@ -753,7 +789,7 @@ class GEOS5FPConnection:
 
     def Ts_K(
             self,
-            time_UTC: datetime,
+            time_UTC: Union[datetime, str],
             geometry: RasterGeometry = None,
             resampling: str = None) -> Raster:
         """
@@ -763,6 +799,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of Ta
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "Ts"
         PRODUCT = "tavg1_2d_slv_Nx"
         VARIABLE = "TS"
@@ -776,7 +814,7 @@ class GEOS5FPConnection:
 
     def Ta_K(
             self,
-            time_UTC: datetime,
+            time_UTC: Union[datetime, str],
             geometry: RasterGeometry = None,
             ST_K: Raster = None,
             water: Raster = None,
@@ -795,12 +833,11 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of Ta
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "Ta"
         PRODUCT = "tavg1_2d_slv_Nx"
         VARIABLE = "T2M"
-
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
 
         logger.info(
             f"retrieving {cl.name(NAME)} "
@@ -860,7 +897,7 @@ class GEOS5FPConnection:
 
             return Ta_K
 
-    def Tmin_K(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def Tmin_K(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         minimum near-surface air temperature (Ta) in Kelvin
         :param time_UTC: date/time in UTC
@@ -868,6 +905,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of Ta
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "Tmin"
         PRODUCT = "inst3_2d_asm_Nx"
         VARIABLE = "T2MMIN"
@@ -879,19 +918,19 @@ class GEOS5FPConnection:
 
         return self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
 
-    def SVP_Pa(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def SVP_Pa(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         Ta_C = self.Ta_C(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         SVP_Pa = 0.6108 * np.exp((17.27 * Ta_C) / (Ta_C + 237.3)) * 1000  # [Pa]
 
         return SVP_Pa
 
-    def SVP_kPa(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def SVP_kPa(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         return self.SVP_Pa(time_UTC=time_UTC, geometry=geometry, resampling=resampling) / 1000
 
-    def Ta_C(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def Ta_C(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         return self.Ta_K(time_UTC=time_UTC, geometry=geometry, resampling=resampling) - 273.15
 
-    def PS(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def PS(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         surface pressure in Pascal
         :param time_UTC: date/time in UTC
@@ -899,6 +938,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of surface pressure
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "surface pressure"
         PRODUCT = "tavg1_2d_slv_Nx"
         VARIABLE = "PS"
@@ -910,7 +951,7 @@ class GEOS5FPConnection:
 
         return self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
 
-    def Q(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def Q(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         near-surface specific humidity (Q) in kilograms per kilogram
         :param time_UTC: date/time in UTC
@@ -918,6 +959,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of Q
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "Q"
         PRODUCT = "tavg1_2d_slv_Nx"
         VARIABLE = "QV2M"
@@ -929,32 +972,24 @@ class GEOS5FPConnection:
 
         return self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
 
-    # def Ea_mb(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
-    #     # https://cran.r-project.org/web/packages/humidity/vignettes/humidity-measures.html
-    #     Q = self.Q(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-    #     PS = self.PS(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-    #     Ea_mb = (Q * PS) / 0.622 + 0.378 * Q
-    #
-    #     return Ea_mb
-
-    def Ea_Pa(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def Ea_Pa(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         RH = self.RH(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         SVP_Pa = self.SVP_Pa(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         Ea_Pa = RH * SVP_Pa
 
         return Ea_Pa
 
-    def Td_K(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def Td_K(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         Ta_K = self.Ta_K(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         RH = self.RH(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         Td_K = Ta_K - (100 - (RH * 100)) / 5
 
         return Td_K
 
-    def Td_C(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def Td_C(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         return self.Td_K(time_UTC=time_UTC, geometry=geometry, resampling=resampling) - 273.15
 
-    def Cp(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def Cp(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         Ps_Pa = self.PS(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         Ea_Pa = self.Ea_Pa(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         Cp = 0.24 * 4185.5 * (1.0 + 0.8 * (0.622 * Ea_Pa / (Ps_Pa - Ea_Pa)))  # [J kg-1 K-1]
@@ -963,7 +998,7 @@ class GEOS5FPConnection:
 
     def VPD_Pa(
             self,
-            time_UTC: datetime,
+            time_UTC: Union[datetime, str],
             ST_K: Raster = None,
             geometry: RasterGeometry = None,
             coarse_geometry: RasterGeometry = None,
@@ -999,7 +1034,7 @@ class GEOS5FPConnection:
 
     def VPD_kPa(
             self,
-            time_UTC: datetime,
+            time_UTC: Union[datetime, str],
             ST_K: Raster = None,
             geometry: RasterGeometry = None,
             coarse_geometry: RasterGeometry = None,
@@ -1024,7 +1059,7 @@ class GEOS5FPConnection:
 
     def RH(
             self,
-            time_UTC: datetime,
+            time_UTC: Union[datetime, str],
             geometry: RasterGeometry = None,
             SM: Raster = None,
             ST_K: Raster = None,
@@ -1126,10 +1161,10 @@ class GEOS5FPConnection:
         else:
             return RH
 
-    def Ea_kPa(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def Ea_kPa(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         return self.Ea_Pa(time_UTC=time_UTC, geometry=geometry, resampling=resampling) / 1000
 
-    def vapor_kgsqm(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def vapor_kgsqm(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         total column water vapor (vapor_gccm) in kilograms per square meter
         :param time_UTC: date/time in UTC
@@ -1137,6 +1172,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "vapor_gccm"
         PRODUCT = "inst3_2d_asm_Nx"
         VARIABLE = "TQV"
@@ -1151,7 +1188,7 @@ class GEOS5FPConnection:
 
         return vapor
 
-    def vapor_gccm(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def vapor_gccm(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         total column water vapor (vapor_gccm) in grams per square centimeter
         :param time_UTC: date/time in UTC
@@ -1161,7 +1198,7 @@ class GEOS5FPConnection:
         """
         return self.vapor_kgsqm(time_UTC=time_UTC, geometry=geometry, resampling=resampling) / 10
 
-    def ozone_dobson(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def ozone_dobson(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         total column ozone (ozone_cm) in Dobson units
         :param time_UTC: date/time in UTC
@@ -1169,6 +1206,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "ozone_cm"
         PRODUCT = "inst3_2d_asm_Nx"
         VARIABLE = "TO3"
@@ -1183,7 +1222,7 @@ class GEOS5FPConnection:
 
         return ozone_dobson
 
-    def ozone_cm(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def ozone_cm(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         total column ozone (ozone_cm) in centimeters
         :param time_UTC: date/time in UTC
@@ -1193,7 +1232,7 @@ class GEOS5FPConnection:
         """
         return self.ozone_dobson(time_UTC=time_UTC, geometry=geometry, resampling=resampling) / 1000
 
-    def U2M(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def U2M(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         eastward wind at 2 meters in meters per second
         :param time_UTC: date/time in UTC
@@ -1201,6 +1240,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "U2M"
         PRODUCT = "inst3_2d_asm_Nx"
         VARIABLE = "U2M"
@@ -1214,7 +1255,7 @@ class GEOS5FPConnection:
 
         return U2M
 
-    def V2M(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def V2M(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         northward wind at 2 meters in meters per second
         :param time_UTC: date/time in UTC
@@ -1222,6 +1263,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "V2M"
         PRODUCT = "inst3_2d_asm_Nx"
         VARIABLE = "V2M"
@@ -1235,7 +1278,7 @@ class GEOS5FPConnection:
 
         return V2M
 
-    def CO2SC(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def CO2SC(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         carbon dioxide suface concentration in ppm or micromol per mol
         :param time_UTC: date/time in UTC
@@ -1243,6 +1286,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "CO2SC"
         PRODUCT = "tavg3_2d_chm_Nx"
         VARIABLE = "CO2SC"
@@ -1266,7 +1311,7 @@ class GEOS5FPConnection:
 
         return CO2SC
 
-    def wind_speed(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def wind_speed(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         wind speed in meters per second
         :param time_UTC: date/time in UTC
@@ -1274,13 +1319,15 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         U = self.U2M(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         V = self.V2M(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         wind_speed = rt.clip(np.sqrt(U ** 2.0 + V ** 2.0), 0.0, None)
 
         return wind_speed
 
-    def SWin(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def SWin(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         incoming shortwave radiation (SWin) in watts per square meter
         :param time_UTC: date/time in UTC
@@ -1288,6 +1335,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of SWin
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "SWin"
         PRODUCT = "tavg1_2d_rad_Nx"
         VARIABLE = "SWGNT"
@@ -1302,7 +1351,7 @@ class GEOS5FPConnection:
 
         return SWin
 
-    def SWTDN(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def SWTDN(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         top of atmosphere incoming shortwave radiation (SWin) in watts per square meter
         :param time_UTC: date/time in UTC
@@ -1310,6 +1359,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of SWin
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "SWTDN"
         PRODUCT = "tavg1_2d_rad_Nx"
         VARIABLE = "SWTDN"
@@ -1324,7 +1375,7 @@ class GEOS5FPConnection:
 
         return SWin
 
-    def ALBVISDR(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def ALBVISDR(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         Direct beam VIS-UV surface albedo
         :param time_UTC: date/time in UTC
@@ -1332,6 +1383,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "ALBVISDR"
         PRODUCT = "tavg1_2d_rad_Nx"
         VARIABLE = "ALBVISDR"
@@ -1346,7 +1399,7 @@ class GEOS5FPConnection:
 
         return image
 
-    def ALBVISDF(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def ALBVISDF(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         Diffuse beam VIS-UV surface albedo
         :param time_UTC: date/time in UTC
@@ -1354,6 +1407,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "ALBVISDF"
         PRODUCT = "tavg1_2d_rad_Nx"
         VARIABLE = "ALBVISDF"
@@ -1368,7 +1423,7 @@ class GEOS5FPConnection:
 
         return image
 
-    def ALBNIRDF(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def ALBNIRDF(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         Diffuse beam NIR surface albedo
         :param time_UTC: date/time in UTC
@@ -1376,6 +1431,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "ALBNIRDF"
         PRODUCT = "tavg1_2d_rad_Nx"
         VARIABLE = "ALBNIRDF"
@@ -1390,7 +1447,7 @@ class GEOS5FPConnection:
 
         return image
 
-    def ALBNIRDR(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def ALBNIRDR(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         Direct beam NIR surface albedo
         :param time_UTC: date/time in UTC
@@ -1398,6 +1455,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "ALBNIRDR"
         PRODUCT = "tavg1_2d_rad_Nx"
         VARIABLE = "ALBNIRDR"
@@ -1412,7 +1471,7 @@ class GEOS5FPConnection:
 
         return image
 
-    def ALBEDO(self, time_UTC: datetime, geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def ALBEDO(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         Surface albedo
         :param time_UTC: date/time in UTC
@@ -1420,6 +1479,8 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo
         """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
         NAME = "ALBEDO"
         PRODUCT = "tavg1_2d_rad_Nx"
         VARIABLE = "ALBEDO"
