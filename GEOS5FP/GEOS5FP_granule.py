@@ -9,7 +9,7 @@ import numpy as np
 import rasters as rt
 from rasters import RasterGeometry, Raster
 
-from .constants import DEFAULT_WORKING_DIRECTORY
+ 
 from .exceptions import GEOS5FPGranuleNotAvailable
 
 logger = logging.getLogger(__name__)
