@@ -48,7 +48,7 @@ class GEOS5FPConnection:
         if download_directory is None:
             download_directory = DEFAULT_DOWNLOAD_DIRECTORY
 
-        logger.info(f"GEOS-5 FP download directory: {cl.dir(download_directory)}")
+        # logger.info(f"GEOS-5 FP download directory: {cl.dir(download_directory)}")
 
         if remote is None:
             remote = self.DEFAULT_URL_BASE
