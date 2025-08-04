@@ -320,6 +320,9 @@ class GEOS5FPConnection:
         if exists(expanded_filename):
             return GEOS5FPGranule(filename)
 
+        import requests
+        from requests.exceptions import ChunkedEncodingError, ConnectionError
+
         while retries > 0:
             retries -= 1
             try:
@@ -358,7 +361,7 @@ class GEOS5FPConnection:
                     timer = Timer()
                     logger.info(f"downloading with requests: {URL} -> {expanded_partial_filename}")
                     try:
-                        response = requests.get(URL, stream=True)
+                        response = requests.get(URL, stream=True, timeout=120)
                         response.raise_for_status()
                         total = int(response.headers.get('content-length', 0))
                         with open(expanded_partial_filename, 'wb') as f, tqdm(
@@ -373,6 +376,15 @@ class GEOS5FPConnection:
                                 if chunk:
                                     f.write(chunk)
                                     bar.update(len(chunk))
+                    except (ChunkedEncodingError, ConnectionError) as e:
+                        logger.error(f"Network error during download: {e}")
+                        if exists(expanded_partial_filename):
+                            os.remove(expanded_partial_filename)
+                        if retries == 0:
+                            raise FailedGEOS5FPDownload(f"requests download failed: {URL} -> {partial_filename}")
+                        logger.warning(f"waiting {wait_seconds} seconds for retry")
+                        sleep(wait_seconds)
+                        continue
                     except Exception as e:
                         logger.exception(f"Download failed: {e}")
                         if exists(expanded_partial_filename):
