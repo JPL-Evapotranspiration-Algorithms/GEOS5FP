@@ -15,7 +15,9 @@ import pandas as pd
 import rasterio
 import rasters as rt
 import requests
+from requests.exceptions import ChunkedEncodingError, ConnectionError
 from tqdm.notebook import tqdm
+
 from dateutil import parser
 from rasters import Raster, RasterGeometry
 
@@ -320,9 +322,6 @@ class GEOS5FPConnection:
         if exists(expanded_filename):
             return GEOS5FPGranule(filename)
 
-        import requests
-        from requests.exceptions import ChunkedEncodingError, ConnectionError
-
         while retries > 0:
             retries -= 1
             try:
@@ -358,24 +357,38 @@ class GEOS5FPConnection:
                         os.remove(expanded_partial_filename)
 
                     # Download with requests and TQDM progress bar
+                    import sys
+                    from tqdm import tqdm as std_tqdm
                     timer = Timer()
+                    import warnings
                     logger.info(f"downloading with requests: {URL} -> {expanded_partial_filename}")
                     try:
                         response = requests.get(URL, stream=True, timeout=120)
                         response.raise_for_status()
                         total = int(response.headers.get('content-length', 0))
-                        with open(expanded_partial_filename, 'wb') as f, tqdm(
-                            desc=posixpath.basename(expanded_partial_filename),
-                            total=total,
-                            unit='B',
-                            unit_scale=True,
-                            unit_divisor=1024,
-                            leave=True
-                        ) as bar:
-                            for chunk in response.iter_content(chunk_size=1024*1024):
-                                if chunk:
-                                    f.write(chunk)
-                                    bar.update(len(chunk))
+                        with open(expanded_partial_filename, 'wb') as f:
+                            # Use the standard tqdm for console, force file=sys.stdout if in a terminal
+                            tqdm_kwargs = dict(
+                                desc=posixpath.basename(expanded_partial_filename),
+                                total=total,
+                                unit='B',
+                                unit_scale=True,
+                                unit_divisor=1024,
+                                leave=True,
+                                dynamic_ncols=True,
+                                ascii=True,
+                                miniters=1,
+                                mininterval=0.1,
+                                disable=False
+                            )
+                            if sys.stdout.isatty():
+                                tqdm_kwargs['file'] = sys.stdout
+                            with std_tqdm(**tqdm_kwargs) as bar:
+                                for chunk in response.iter_content(chunk_size=1024*1024):
+                                    if chunk:
+                                        f.write(chunk)
+                                        bar.update(len(chunk))
+                                        bar.refresh()
                     except (ChunkedEncodingError, ConnectionError) as e:
                         logger.error(f"Network error during download: {e}")
                         if exists(expanded_partial_filename):
@@ -402,8 +415,10 @@ class GEOS5FPConnection:
                     move(expanded_partial_filename, expanded_filename)
 
                     try:
-                        with rasterio.open(expanded_filename, "r") as file:
-                            pass
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore")
+                            with rasterio.open(expanded_filename, "r") as file:
+                                pass
                     except Exception as e:
                         logger.exception(f"unable to open GEOS-5 FP file: {filename}")
                         logger.warning(f"removing corrupted GEOS-5 FP file: {filename}")
