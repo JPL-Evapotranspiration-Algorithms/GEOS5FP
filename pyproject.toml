@@ -23,6 +23,7 @@ dependencies = [
     "pandas",
     "pyproj",
     "python-dateutil",
+    "pytictoc",
     "rasterio",
     "rasters",
     "requests",

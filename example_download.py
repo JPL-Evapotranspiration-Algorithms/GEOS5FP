@@ -5,7 +5,7 @@ geos5fp = GEOS5FP()
 
 geometry = sentinel_tiles.grid("11SPS")
 
-timestamp = "2025-02-21 12:00:00"
+timestamp = "2025-02-22 12:00:00"
 
 Ta_C = geos5fp.Ta_C(time_UTC=timestamp, geometry=geometry)
 print("Ta_C:", Ta_C)
