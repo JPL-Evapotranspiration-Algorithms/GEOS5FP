@@ -10,6 +10,10 @@ Author: Gregory H. Halverson
 import logging
 import os
 import re
+import signal
+import subprocess
+import sys
+import tempfile
 from datetime import datetime
 from os.path import exists, expanduser, abspath, basename, getsize
 from typing import Dict, List, Optional, Tuple, Union, Any
@@ -42,6 +46,16 @@ class GEOS5FPValidationResult:
     def __bool__(self) -> bool:
         """Allow boolean evaluation of validation result."""
         return self.is_valid
+    
+    @property
+    def error(self) -> Optional[str]:
+        """Get the first error or None if no errors."""
+        return self.errors[0] if self.errors else None
+    
+    @property
+    def issues(self) -> List[str]:
+        """Get combined list of errors and warnings."""
+        return self.errors + self.warnings
     
     def __str__(self) -> str:
         """String representation of validation result."""
@@ -77,7 +91,9 @@ def validate_GEOS5FP_NetCDF_file(
     max_file_size_mb: float = 1000.0,
     required_variables: Optional[List[str]] = None,
     check_data_integrity: bool = True,
-    verbose: bool = False
+    verbose: bool = False,
+    use_subprocess: bool = True,
+    timeout_seconds: int = 30
 ) -> GEOS5FPValidationResult:
     """
     Validate a GEOS-5 FP NetCDF file for integrity, format compliance, and data quality.
@@ -92,6 +108,9 @@ def validate_GEOS5FP_NetCDF_file(
     - Data integrity checks
     - Temporal information validation
     
+    The validation is resilient to low-level C++ crashes from GDAL/NetCDF libraries
+    by using process isolation when needed.
+    
     Args:
         filename (str): Path to the GEOS-5 FP NetCDF file to validate
         check_variables (bool): Whether to validate variables in the file. Default: True
@@ -104,6 +123,8 @@ def validate_GEOS5FP_NetCDF_file(
                                                 If None, uses common GEOS-5 FP variables
         check_data_integrity (bool): Whether to perform data integrity checks. Default: True
         verbose (bool): Whether to log detailed validation steps. Default: False
+        use_subprocess (bool): Whether to use subprocess isolation for safety. Default: True
+        timeout_seconds (int): Timeout for subprocess validation. Default: 30
     
     Returns:
         GEOS5FPValidationResult: Comprehensive validation result with status, errors, warnings, and metadata
@@ -122,6 +143,53 @@ def validate_GEOS5FP_NetCDF_file(
     # Input validation
     if not filename:
         raise ValueError("filename must be provided")
+    
+    # Use subprocess isolation for safety against C++ crashes
+    if use_subprocess:
+        return _validate_in_subprocess(
+            filename=filename,
+            check_variables=check_variables,
+            check_spatial_ref=check_spatial_ref,
+            check_temporal_info=check_temporal_info,
+            check_file_size=check_file_size,
+            min_file_size_mb=min_file_size_mb,
+            max_file_size_mb=max_file_size_mb,
+            required_variables=required_variables,
+            check_data_integrity=check_data_integrity,
+            verbose=verbose,
+            timeout_seconds=timeout_seconds
+        )
+    
+    # Direct validation (legacy mode, less safe)
+    return _validate_direct(
+        filename=filename,
+        check_variables=check_variables,
+        check_spatial_ref=check_spatial_ref,
+        check_temporal_info=check_temporal_info,
+        check_file_size=check_file_size,
+        min_file_size_mb=min_file_size_mb,
+        max_file_size_mb=max_file_size_mb,
+        required_variables=required_variables,
+        check_data_integrity=check_data_integrity,
+        verbose=verbose
+    )
+
+
+def _validate_direct(
+    filename: str,
+    check_variables: bool = True,
+    check_spatial_ref: bool = True,
+    check_temporal_info: bool = True,
+    check_file_size: bool = True,
+    min_file_size_mb: float = 0.1,
+    max_file_size_mb: float = 1000.0,
+    required_variables: Optional[List[str]] = None,
+    check_data_integrity: bool = True,
+    verbose: bool = False
+) -> GEOS5FPValidationResult:
+    """
+    Direct validation without subprocess isolation (legacy mode).
+    """
     
     # Initialize result containers
     errors = []
@@ -447,6 +515,24 @@ def is_valid_GEOS5FP_file(filename: str, **kwargs) -> bool:
         return False
 
 
+def safe_validate_GEOS5FP_NetCDF_file(filename: str, **kwargs) -> GEOS5FPValidationResult:
+    """
+    Ultra-safe validation that always uses subprocess isolation.
+    
+    This function is specifically designed to handle files that might cause
+    C++ crashes or hangs in GDAL/NetCDF libraries.
+    
+    Args:
+        filename (str): Path to the GEOS-5 FP NetCDF file
+        **kwargs: Additional arguments passed to validate_GEOS5FP_NetCDF_file
+    
+    Returns:
+        GEOS5FPValidationResult: Validation result
+    """
+    kwargs['use_subprocess'] = True
+    return validate_GEOS5FP_NetCDF_file(filename, **kwargs)
+
+
 def quick_validate(filename: str) -> GEOS5FPValidationResult:
     """
     Quick validation with minimal checks for performance.
@@ -463,5 +549,353 @@ def quick_validate(filename: str) -> GEOS5FPValidationResult:
         check_spatial_ref=False,
         check_temporal_info=True,
         check_data_integrity=False,
-        verbose=False
+        verbose=False,
+        use_subprocess=False  # Skip subprocess for quick validation
     )
+
+
+def _validate_in_subprocess(
+    filename: str,
+    check_variables: bool = True,
+    check_spatial_ref: bool = True,
+    check_temporal_info: bool = True,
+    check_file_size: bool = True,
+    min_file_size_mb: float = 0.1,
+    max_file_size_mb: float = 1000.0,
+    required_variables: Optional[List[str]] = None,
+    check_data_integrity: bool = True,
+    verbose: bool = False,
+    timeout_seconds: int = 30
+) -> GEOS5FPValidationResult:
+    """
+    Validate file using subprocess isolation to protect against C++ crashes.
+    """
+    import json
+    
+    # Create temporary files for communication
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as config_file:
+        config = {
+            'filename': filename,
+            'check_variables': check_variables,
+            'check_spatial_ref': check_spatial_ref,
+            'check_temporal_info': check_temporal_info,
+            'check_file_size': check_file_size,
+            'min_file_size_mb': min_file_size_mb,
+            'max_file_size_mb': max_file_size_mb,
+            'required_variables': required_variables,
+            'check_data_integrity': check_data_integrity,
+            'verbose': verbose
+        }
+        json.dump(config, config_file)
+        config_file_path = config_file.name
+    
+    result_file_path = config_file_path.replace('.json', '_result.json')
+    
+    try:
+        # Create the subprocess validation script
+        validator_script = _create_subprocess_validator_script()
+        
+        # Run validation in subprocess with timeout
+        cmd = [sys.executable, '-c', validator_script, config_file_path, result_file_path]
+        
+        if verbose:
+            logger.info(f"Running subprocess validation with timeout {timeout_seconds}s")
+        
+        try:
+            result = subprocess.run(
+                cmd,
+                timeout=timeout_seconds,
+                capture_output=True,
+                text=True,
+                check=False  # Don't raise on non-zero exit
+            )
+            
+            # Check if result file was created
+            if exists(result_file_path):
+                with open(result_file_path, 'r') as f:
+                    result_dict = json.load(f)
+                
+                # Convert dictionary to GEOS5FPValidationResult
+                validation_result = GEOS5FPValidationResult(
+                    result_dict['is_valid'],
+                    result_dict['filename'],
+                    result_dict['errors'],
+                    result_dict['warnings'],
+                    result_dict['metadata']
+                )
+                    
+                if verbose:
+                    logger.info("Subprocess validation completed successfully")
+                    
+                return validation_result
+            else:
+                # Process completed but no result file - something went wrong
+                error_msg = f"Subprocess validation failed - no result file created"
+                if result.stderr:
+                    error_msg += f": {result.stderr.strip()}"
+                
+                if verbose:
+                    logger.warning(error_msg)
+                
+                return GEOS5FPValidationResult(
+                    False, filename, 
+                    [f"Subprocess validation failed: {error_msg}"], 
+                    [], {}
+                )
+                
+        except subprocess.TimeoutExpired:
+            error_msg = f"Validation timed out after {timeout_seconds} seconds - possible C++ crash or hang"
+            if verbose:
+                logger.warning(error_msg)
+                
+            return GEOS5FPValidationResult(
+                False, filename,
+                [error_msg],
+                [], {}
+            )
+            
+        except subprocess.SubprocessError as e:
+            error_msg = f"Subprocess validation error: {e}"
+            if verbose:
+                logger.warning(error_msg)
+                
+            return GEOS5FPValidationResult(
+                False, filename,
+                [error_msg],
+                [], {}
+            )
+            
+    finally:
+        # Clean up temporary files
+        for temp_file in [config_file_path, result_file_path]:
+            if exists(temp_file):
+                try:
+                    os.unlink(temp_file)
+                except OSError:
+                    pass  # Ignore cleanup errors
+
+
+def _create_subprocess_validator_script() -> str:
+    """
+    Create the Python script code for subprocess validation.
+    """
+    return '''
+import sys
+import json
+import os
+from os.path import exists, expanduser, abspath, basename, getsize
+import logging
+import re
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+
+# Suppress GDAL warnings to avoid cluttering output
+os.environ['CPL_LOG'] = '/dev/null'
+os.environ['GDAL_DISABLE_READDIR_ON_OPEN'] = 'YES'
+
+try:
+    import numpy as np
+    import rasterio
+    from rasterio.errors import RasterioIOError
+    
+    # Validation result class (simplified for subprocess)
+    class ValidationResult:
+        def __init__(self, is_valid, filename, errors=None, warnings=None, metadata=None):
+            self.is_valid = is_valid
+            self.filename = filename
+            self.errors = errors or []
+            self.warnings = warnings or []
+            self.metadata = metadata or {}
+    
+    def validate_file_isolated(config):
+        """Isolated validation function for subprocess."""
+        filename = config['filename']
+        errors = []
+        warnings = []
+        metadata = {}
+        
+        # Expand path
+        expanded_filename = abspath(expanduser(filename))
+        
+        # File existence check
+        if not exists(expanded_filename):
+            errors.append(f"File does not exist: {expanded_filename}")
+            return ValidationResult(False, filename, errors, warnings, metadata)
+        
+        # File size validation
+        if config['check_file_size']:
+            try:
+                file_size_bytes = getsize(expanded_filename)
+                file_size_mb = file_size_bytes / (1024 * 1024)
+                metadata['file_size_mb'] = round(file_size_mb, 2)
+                metadata['file_size_bytes'] = file_size_bytes
+                
+                if file_size_bytes == 0:
+                    errors.append("File is empty (0 bytes)")
+                elif file_size_mb < config['min_file_size_mb']:
+                    errors.append(f"File size ({file_size_mb:.2f} MB) is below minimum threshold ({config['min_file_size_mb']} MB)")
+                elif file_size_mb > config['max_file_size_mb']:
+                    warnings.append(f"File size ({file_size_mb:.2f} MB) is above typical threshold ({config['max_file_size_mb']} MB)")
+            except OSError as e:
+                errors.append(f"Unable to determine file size: {e}")
+        
+        # Filename format validation
+        filename_base = basename(expanded_filename)
+        metadata['filename'] = filename_base
+        
+        geos5fp_pattern = re.compile(r'^GEOS\\.fp\\.asm\\.([^.]+)\\.(\\d{8}_\\d{4})\\.V\\d{2}\\.nc4$')
+        match = geos5fp_pattern.match(filename_base)
+        
+        if match:
+            product_name = match.group(1)
+            time_string = match.group(2)
+            metadata['product_name'] = product_name
+            metadata['time_string'] = time_string
+            
+            if config['check_temporal_info']:
+                try:
+                    parsed_time = datetime.strptime(time_string, "%Y%m%d_%H%M")
+                    metadata['parsed_datetime'] = parsed_time.isoformat()
+                except ValueError as e:
+                    errors.append(f"Invalid timestamp format in filename: {time_string} ({e})")
+        else:
+            warnings.append(f"Filename does not match expected GEOS-5 FP pattern: {filename_base}")
+        
+        # NetCDF format validation with robust error handling
+        try:
+            with rasterio.open(expanded_filename) as dataset:
+                metadata['driver'] = dataset.driver
+                metadata['count'] = dataset.count
+                metadata['width'] = dataset.width
+                metadata['height'] = dataset.height
+                metadata['crs'] = str(dataset.crs) if dataset.crs else None
+                metadata['bounds'] = dataset.bounds
+                metadata['transform'] = list(dataset.transform)[:6] if dataset.transform else None
+                
+                # Spatial reference validation
+                if config['check_spatial_ref']:
+                    if dataset.crs is None:
+                        warnings.append("No coordinate reference system (CRS) information found")
+                    else:
+                        crs_string = str(dataset.crs).lower()
+                        if not ('wgs84' in crs_string or 'epsg:4326' in crs_string or '+proj=longlat' in crs_string):
+                            warnings.append(f"Unexpected CRS for global meteorological data: {dataset.crs}")
+                    
+                    if dataset.bounds:
+                        bounds = dataset.bounds
+                        if (bounds.left < -180.1 or bounds.right > 180.1 or 
+                            bounds.bottom < -90.1 or bounds.top > 90.1):
+                            warnings.append(f"Bounds appear to extend beyond valid geographic coordinates: {bounds}")
+                        elif not (bounds.right - bounds.left > 350 and bounds.top - bounds.bottom > 170):
+                            warnings.append(f"Dataset may not have global coverage: {bounds}")
+                
+                # Data integrity check
+                if config['check_data_integrity'] and dataset.count > 0:
+                    try:
+                        sample_data = dataset.read(1, window=rasterio.windows.Window(0, 0, 
+                                                                                   min(100, dataset.width), 
+                                                                                   min(100, dataset.height)))
+                        if sample_data is not None:
+                            valid_data_count = np.count_nonzero(~np.isnan(sample_data))
+                            total_sample_size = sample_data.size
+                            valid_data_ratio = valid_data_count / total_sample_size if total_sample_size > 0 else 0
+                            metadata['sample_valid_data_ratio'] = round(valid_data_ratio, 3)
+                            
+                            if valid_data_ratio == 0:
+                                warnings.append("Sample data contains only NaN values")
+                            elif valid_data_ratio < 0.1:
+                                warnings.append(f"Sample data has very low valid data ratio: {valid_data_ratio:.3f}")
+                    except Exception as e:
+                        warnings.append(f"Unable to read sample data for integrity check: {e}")
+                
+                # Variable validation
+                if config['check_variables']:
+                    subdatasets = dataset.subdatasets if hasattr(dataset, 'subdatasets') else []
+                    if subdatasets:
+                        metadata['subdatasets'] = len(subdatasets)
+                        variable_names = []
+                        for subdataset in subdatasets[:10]:
+                            if 'NETCDF:' in subdataset and ':' in subdataset:
+                                parts = subdataset.split(':')
+                                if len(parts) >= 3:
+                                    var_name = parts[-1]
+                                    variable_names.append(var_name)
+                        metadata['variable_names'] = variable_names[:20]
+                        
+                        required_variables = config.get('required_variables')
+                        if required_variables:
+                            missing_vars = [var for var in required_variables if var not in variable_names]
+                            if missing_vars:
+                                errors.append(f"Missing required variables: {', '.join(missing_vars)}")
+                        
+                        # Test access to first variable
+                        if subdatasets:
+                            try:
+                                test_var = subdatasets[0]
+                                with rasterio.open(test_var) as var_dataset:
+                                    metadata['test_variable_width'] = var_dataset.width
+                                    metadata['test_variable_height'] = var_dataset.height
+                            except Exception as e:
+                                warnings.append(f"Unable to access variables as subdatasets: {e}")
+                
+        except RasterioIOError as e:
+            errors.append(f"Unable to open file as NetCDF: {e}")
+        except Exception as e:
+            errors.append(f"Unexpected error reading NetCDF file: {e}")
+        
+        is_valid = len(errors) == 0
+        return ValidationResult(is_valid, filename, errors, warnings, metadata)
+    
+    # Main subprocess execution
+    if __name__ == "__main__":
+        if len(sys.argv) != 3:
+            sys.exit(1)
+        
+        config_file = sys.argv[1]
+        result_file = sys.argv[2]
+        
+        try:
+            # Load configuration
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+            
+            # Perform validation
+            result = validate_file_isolated(config)
+            
+            # Save result as JSON
+            result_dict = {
+                'is_valid': result.is_valid,
+                'filename': result.filename,
+                'errors': result.errors,
+                'warnings': result.warnings,
+                'metadata': result.metadata
+            }
+            with open(result_file, 'w') as f:
+                json.dump(result_dict, f)
+                
+        except Exception as e:
+            # Create error result as JSON
+            error_result = {
+                'is_valid': False,
+                'filename': config.get('filename', 'unknown'),
+                'errors': [f"Subprocess validation exception: {e}"],
+                'warnings': [],
+                'metadata': {}
+            }
+            try:
+                with open(result_file, 'w') as f:
+                    json.dump(error_result, f)
+            except:
+                pass  # If we can't even write the error, subprocess will handle it
+            sys.exit(1)
+
+except ImportError as e:
+    # Handle missing dependencies
+    error_result = ValidationResult(False, 'unknown', [f"Missing dependencies: {e}"], [], {})
+    try:
+        with open(sys.argv[2], 'wb') as f:
+            pickle.dump(error_result, f)
+    except:
+        pass
+    sys.exit(1)
+'''

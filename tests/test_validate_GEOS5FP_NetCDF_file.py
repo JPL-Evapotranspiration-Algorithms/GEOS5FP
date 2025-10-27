@@ -216,7 +216,8 @@ class TestGEOS5FPValidation:
         os.rename(temp_file, proper_path)
         
         try:
-            result = validate_GEOS5FP_NetCDF_file(proper_path, min_file_size_mb=0.01)  # Lower threshold for test
+            # Use direct validation for mocked test (subprocess can't see mocks)
+            result = validate_GEOS5FP_NetCDF_file(proper_path, min_file_size_mb=0.01, use_subprocess=False)
             
             # Should be valid with mocked successful rasterio
             assert result.is_valid is True
