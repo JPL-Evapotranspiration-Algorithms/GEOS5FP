@@ -461,6 +461,8 @@ class GEOS5FPConnection:
         )
 
         with Timer() as timer:
+            logger.info(f"reading before granule: {cl.file(before_granule.filename)}")
+            t_before = Timer()
             before = before_granule.read(
                 variable,
                 geometry=geometry,
@@ -469,7 +471,10 @@ class GEOS5FPConnection:
                 max_value=max_value,
                 exclude_values=exclude_values
             )
+            logger.info(f"before granule read complete ({t_before.duration:0.2f} seconds)")
 
+            logger.info(f"reading after granule: {cl.file(after_granule.filename)}")
+            t_after = Timer()
             after = after_granule.read(
                 variable,
                 geometry=geometry,
@@ -478,6 +483,7 @@ class GEOS5FPConnection:
                 max_value=max_value,
                 exclude_values=exclude_values
             )
+            logger.info(f"after granule read complete ({t_after.duration:0.2f} seconds)")
 
             time_fraction = (time_UTC - before_granule.time_UTC) / (after_granule.time_UTC - before_granule.time_UTC)
             source_diff = after - before
@@ -488,7 +494,9 @@ class GEOS5FPConnection:
         after_filename = after_granule.filename
         filenames = [before_filename, after_filename]
         self.filenames = set(self.filenames) | set(filenames)
-        interpolated_data["filenames"] = filenames
+        
+        if isinstance(interpolated_data, Raster):
+            interpolated_data["filenames"] = filenames
 
         if cmap is not None:
             interpolated_data.cmap = cmap
