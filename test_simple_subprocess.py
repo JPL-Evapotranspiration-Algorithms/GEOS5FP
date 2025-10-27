@@ -33,12 +33,11 @@ def test_basic_functionality():
     print(f"Safe result - Error: {result_safe.error}")
     
     # All should be invalid due to file not existing
-    if not result_direct.is_valid and not result_subprocess.is_valid and not result_safe.is_valid:
-        print("\n✅ All methods correctly identified non-existent file as invalid!")
-        return True
-    else:
-        print("\n❌ Some methods failed to identify non-existent file as invalid!")
-        return False
+    assert not result_direct.is_valid, "Direct validation should fail for non-existent file"
+    assert not result_subprocess.is_valid, "Subprocess validation should fail for non-existent file"
+    assert not result_safe.is_valid, "Safe validation should fail for non-existent file"
+    
+    print("\n✅ All methods correctly identified non-existent file as invalid!")
 
 def test_empty_file():
     """Test with an empty file."""
@@ -64,12 +63,10 @@ def test_empty_file():
         print(f"Subprocess result - Error: {result_subprocess.error}")
         
         # Both should be invalid (empty file)
-        if not result_direct.is_valid and not result_subprocess.is_valid:
-            print("\n✅ Both methods correctly identified empty file as invalid!")
-            return True
-        else:
-            print("\n❌ Methods disagreed on empty file validation!")
-            return False
+        assert not result_direct.is_valid, "Direct validation should fail for empty file"
+        assert not result_subprocess.is_valid, "Subprocess validation should fail for empty file"
+        
+        print("\n✅ Both methods correctly identified empty file as invalid!")
             
     finally:
         if os.path.exists(tmp_path):
@@ -100,12 +97,10 @@ def test_text_file():
         print(f"Subprocess result - Error: {result_subprocess.error}")
         
         # Both should be invalid (not a NetCDF file)
-        if not result_direct.is_valid and not result_subprocess.is_valid:
-            print("\n✅ Both methods correctly identified text file as invalid NetCDF!")
-            return True
-        else:
-            print("\n❌ Methods disagreed on text file validation!")
-            return False
+        assert not result_direct.is_valid, "Direct validation should fail for text file"
+        assert not result_subprocess.is_valid, "Subprocess validation should fail for text file"
+        
+        print("\n✅ Both methods correctly identified text file as invalid NetCDF!")
             
     finally:
         if os.path.exists(tmp_path):
@@ -146,8 +141,8 @@ if __name__ == "__main__":
     for test_func in tests:
         total_tests += 1
         try:
-            if test_func():
-                success_count += 1
+            test_func()
+            success_count += 1
         except Exception as e:
             print(f"\n❌ Test {test_func.__name__} failed with error: {e}")
     
