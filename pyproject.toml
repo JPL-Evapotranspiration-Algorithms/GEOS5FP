@@ -3,7 +3,7 @@ requires = ["setuptools>=60", "setuptools-scm>=8.0", "wheel"]
 
 [project]
 name = "GEOS5FP"
-version = "1.2.4"
+version = "1.3.0"
 description = "generates rasters of near-real-time GEOS-5 FP near-surface meteorology"
 readme = "README.md"
 authors = [
@@ -23,6 +23,7 @@ dependencies = [
     "pandas",
     "pyproj",
     "python-dateutil",
+    "pytictoc",
     "rasterio",
     "rasters>=1.13.2",
     "requests",

@@ -27,6 +27,7 @@ from .HTTP_listing import HTTP_listing
 from .GEOS5FP_granule import GEOS5FPGranule
 from .timer import Timer
 from .downscaling import linear_downscale, bias_correct
+from .download_file import download_file
 
 logger = logging.getLogger(__name__)
 
@@ -309,136 +310,117 @@ class GEOS5FPConnection:
 
         return filename
 
-    def download_file(self, URL: str, filename: str = None, retries: int = 3, wait_seconds: int = 30) -> GEOS5FPGranule:
+    def download_file(self, URL: str, filename: str = None, retries: int = 3, wait_seconds: int = 30) -> 'GEOS5FPGranule':
+        """
+        Download a GEOS-5 FP file with GEOS-5 FP specific handling and comprehensive validation.
+        
+        This method includes:
+        - Pre-download validation of existing files
+        - Automatic cleanup of invalid existing files
+        - Post-download validation with retry logic
+        - Comprehensive error reporting
+        
+        Communicates specific circumstances using exception classes.
+        """
+        from .exceptions import GEOS5FPDayNotAvailable, GEOS5FPGranuleNotAvailable, FailedGEOS5FPDownload
+        from .validate_GEOS5FP_NetCDF_file import validate_GEOS5FP_NetCDF_file
+
+        # GEOS-5 FP: check remote existence and generate filename if needed
+        head_resp = requests.head(URL)
+        if head_resp.status_code == 404:
+            directory_URL = posixpath.dirname(URL)
+            dir_resp = requests.head(directory_URL)
+            if dir_resp.status_code == 404:
+                raise GEOS5FPDayNotAvailable(directory_URL)
+            else:
+                raise GEOS5FPGranuleNotAvailable(URL)
+
         if filename is None:
             filename = self.download_filename(URL)
 
         expanded_filename = os.path.expanduser(filename)
 
-        if exists(expanded_filename) and getsize(expanded_filename) == 0:
-            logger.warning(f"removing previously created zero-size corrupted GEOS-5 FP file: {filename}")
-            os.remove(expanded_filename)
-
+        # Pre-download validation: check if file already exists and is valid
         if exists(expanded_filename):
-            return GEOS5FPGranule(filename)
+            logger.info(f"checking existing file: {filename}")
+            validation_result = validate_GEOS5FP_NetCDF_file(expanded_filename, verbose=False)
+            
+            if validation_result.is_valid:
+                logger.info(f"existing file is valid: {filename} ({validation_result.metadata.get('file_size_mb', 'unknown')} MB)")
+                return GEOS5FPGranule(filename)
+            else:
+                logger.warning(f"existing file is invalid, removing: {filename}")
+                for error in validation_result.errors[:3]:  # Log first 3 errors
+                    logger.warning(f"  validation error: {error}")
+                try:
+                    os.remove(expanded_filename)
+                    logger.info(f"removed invalid file: {filename}")
+                except OSError as e:
+                    logger.warning(f"failed to remove invalid file {filename}: {e}")
 
-        while retries > 0:
-            retries -= 1
+        # Track download attempts with validation
+        download_attempts = 0
+        max_download_attempts = retries
+        
+        while download_attempts < max_download_attempts:
+            download_attempts += 1
+            logger.info(f"download attempt {download_attempts}/{max_download_attempts}: {URL}")
+            
             try:
-                if exists(expanded_filename):
-                    try:
-                        with warnings.catch_warnings():
-                            warnings.simplefilter("ignore")
-                            with rasterio.open(expanded_filename, "r") as file:
-                                pass
-                    except Exception as e:
-                        logger.exception(f"unable to open GEOS-5 FP file: {filename}")
-                        logger.warning(f"removing corrupted GEOS-5 FP file: {filename}")
-                        os.remove(expanded_filename)
-
-                if exists(expanded_filename):
-                    logger.info(f"GEOS-5 FP file found: {cl.file(filename)}")
-                else:
-                    # Verify that the file exists at the remote
-                    if requests.head(URL).status_code == 404:
-                        directory_URL = posixpath.dirname(URL)
-                        if requests.head(directory_URL).status_code == 404:
-                            raise GEOS5FPDayNotAvailable(f"GEOS-5 FP day not available: {directory_URL}")
-                        else:
-                            raise GEOS5FPGranuleNotAvailable(f"GEOS-5 FP granule not available: {URL}")
-
-                    logger.info(f"downloading GEOS-5 FP: {cl.URL(URL)} -> {cl.file(filename)}")
-                    makedirs(os.path.dirname(expanded_filename), exist_ok=True)
-                    partial_filename = f"{filename}.{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.download"
-                    expanded_partial_filename = os.path.expanduser(partial_filename)
-
-                    if exists(expanded_partial_filename) and getsize(expanded_partial_filename) == 0:
-                        logger.warning(f"removing zero-size corrupted GEOS-5 FP file: {partial_filename}")
-                        os.remove(expanded_partial_filename)
-
-                    # Download with requests and TQDM progress bar
-                    import sys
-                    from tqdm import tqdm as std_tqdm
-                    timer = Timer()
-                    import warnings
-                    logger.info(f"downloading with requests: {URL} -> {expanded_partial_filename}")
-                    try:
-                        response = requests.get(URL, stream=True, timeout=120)
-                        response.raise_for_status()
-                        total = int(response.headers.get('content-length', 0))
-                        with open(expanded_partial_filename, 'wb') as f:
-                            # Use the standard tqdm for console, force file=sys.stdout if in a terminal
-                            tqdm_kwargs = dict(
-                                desc=posixpath.basename(expanded_partial_filename),
-                                total=total,
-                                unit='B',
-                                unit_scale=True,
-                                unit_divisor=1024,
-                                leave=True,
-                                dynamic_ncols=True,
-                                ascii=True,
-                                miniters=1,
-                                mininterval=0.1,
-                                disable=False
-                            )
-                            if sys.stdout.isatty():
-                                tqdm_kwargs['file'] = sys.stdout
-                            with std_tqdm(**tqdm_kwargs) as bar:
-                                for chunk in response.iter_content(chunk_size=1024*1024):
-                                    if chunk:
-                                        f.write(chunk)
-                                        bar.update(len(chunk))
-                                        bar.refresh()
-                    except (ChunkedEncodingError, ConnectionError) as e:
-                        logger.error(f"Network error during download: {e}")
-                        if exists(expanded_partial_filename):
-                            os.remove(expanded_partial_filename)
-                        if retries == 0:
-                            raise FailedGEOS5FPDownload(f"requests download failed: {URL} -> {partial_filename}")
-                        logger.warning(f"waiting {wait_seconds} seconds for retry")
-                        sleep(wait_seconds)
-                        continue
-                    except Exception as e:
-                        logger.exception(f"Download failed: {e}")
-                        if exists(expanded_partial_filename):
-                            os.remove(expanded_partial_filename)
-                        raise FailedGEOS5FPDownload(f"requests download failed: {URL} -> {partial_filename}")
-
-                    if not exists(expanded_partial_filename):
-                        raise IOError(f"unable to download URL: {URL}")
-
-                    if exists(expanded_partial_filename) and getsize(expanded_partial_filename) == 0:
-                        logger.warning(f"removing zero-size corrupted GEOS-5 FP file: {partial_filename}")
-                        os.remove(expanded_partial_filename)
-                        raise FailedGEOS5FPDownload(f"zero-size file from GEOS-5 FP download: {URL} -> {partial_filename}")
-
-                    move(expanded_partial_filename, expanded_filename)
-
-                    try:
-                        with warnings.catch_warnings():
-                            warnings.simplefilter("ignore")
-                            with rasterio.open(expanded_filename, "r") as file:
-                                pass
-                    except Exception as e:
-                        logger.exception(f"unable to open GEOS-5 FP file: {filename}")
-                        logger.warning(f"removing corrupted GEOS-5 FP file: {filename}")
-                        os.remove(expanded_filename)
-                        raise FailedGEOS5FPDownload(f"GEOS-5 FP corrupted download: {URL} -> {filename}")
-
-                    logger.info(f"GEOS-5 FP download completed: {cl.file(filename)} ({(getsize(expanded_filename) / 1000000):0.2f} MB) ({cl.time(timer.duration)} seconds)")
-
-                granule = GEOS5FPGranule(filename)
-
-                return granule
-
-            except Exception as e:
-                if retries == 0:
-                    raise e
-
-                logger.warning(e)
-                logger.warning(f"waiting {wait_seconds} seconds for retry")
+                result_filename = download_file(
+                    URL=URL,
+                    filename=filename,
+                    retries=1,  # Handle retries at this level
+                    wait_seconds=wait_seconds
+                )
+            except FailedGEOS5FPDownload as e:
+                # Already a specific download failure
+                if download_attempts >= max_download_attempts:
+                    raise
+                logger.warning(f"download attempt {download_attempts} failed: {e}")
+                logger.warning(f"waiting {wait_seconds} seconds before retry...")
                 sleep(wait_seconds)
                 continue
+            except Exception as e:
+                # Any other error during download
+                if download_attempts >= max_download_attempts:
+                    raise FailedGEOS5FPDownload(str(e))
+                logger.warning(f"download attempt {download_attempts} failed: {e}")
+                logger.warning(f"waiting {wait_seconds} seconds before retry...")
+                sleep(wait_seconds)
+                continue
+
+            # Post-download validation with comprehensive checks
+            logger.info(f"validating downloaded file: {result_filename}")
+            validation_result = validate_GEOS5FP_NetCDF_file(expanded_filename, verbose=False)
+            
+            if validation_result.is_valid:
+                logger.info(f"download and validation successful: {result_filename} ({validation_result.metadata.get('file_size_mb', 'unknown')} MB)")
+                if 'product_name' in validation_result.metadata:
+                    logger.info(f"validated product: {validation_result.metadata['product_name']}")
+                return GEOS5FPGranule(result_filename)
+            else:
+                logger.warning(f"downloaded file failed validation: {result_filename}")
+                for error in validation_result.errors[:3]:  # Log first 3 errors
+                    logger.warning(f"  validation error: {error}")
+                
+                # Clean up invalid download
+                try:
+                    os.remove(expanded_filename)
+                    logger.info(f"removed invalid downloaded file: {result_filename}")
+                except OSError as e:
+                    logger.warning(f"failed to remove invalid file {result_filename}: {e}")
+                
+                if download_attempts >= max_download_attempts:
+                    error_summary = '; '.join(validation_result.errors[:2])
+                    raise FailedGEOS5FPDownload(f"downloaded file validation failed after {max_download_attempts} attempts: {error_summary}")
+                
+                logger.warning(f"retrying download due to validation failure (attempt {download_attempts + 1}/{max_download_attempts})")
+                logger.warning(f"waiting {wait_seconds} seconds before retry...")
+                sleep(wait_seconds)
+
+        # This should not be reached due to the logic above, but included for completeness
+        raise FailedGEOS5FPDownload(f"download failed after {max_download_attempts} attempts")
 
     def before_and_after(
             self,
