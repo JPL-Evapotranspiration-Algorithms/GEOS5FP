@@ -15,10 +15,53 @@ import pandas as pd
 import rasterio
 import rasters as rt
 import requests
-from requests.exceptions import ChunkedEncodingError, ConnectionError
+from requests.exceptions import ChunkedEncodingError, ConnectionError, SSLError
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from tqdm.notebook import tqdm
 
 from dateutil import parser
+
+
+def create_robust_session():
+    """Create robust session with SSL error handling and retry strategy."""
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=3,
+        status_forcelist=[429, 500, 502, 503, 504],
+        backoff_factor=1,
+        allowed_methods=["HEAD", "GET", "OPTIONS"]
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
+def make_head_request_with_ssl_fallback(url, timeout=30):
+    """Make HEAD request with SSL error handling and fallback strategies."""
+    logger = logging.getLogger(__name__)
+    session = create_robust_session()
+    
+    # Try with default SSL settings first
+    try:
+        logger.debug(f"attempting HEAD request with default SSL: {url}")
+        return session.head(url, timeout=timeout, verify=True)
+    except SSLError as e:
+        logger.warning(f"SSL error with default settings: {e}")
+        
+        # Try with SSL verification disabled as fallback
+        try:
+            logger.warning(f"retrying HEAD request with SSL verification disabled: {url}")
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                return session.head(url, timeout=timeout, verify=False)
+        except Exception as fallback_e:
+            logger.error(f"HEAD request failed even with SSL verification disabled: {fallback_e}")
+            raise SSLError(f"Failed to connect to {url} due to SSL issues. Original error: {e}")
+    except Exception as e:
+        logger.error(f"HEAD request failed: {e}")
+        raise
 from rasters import Raster, RasterGeometry
 
 from .constants import *
@@ -322,18 +365,35 @@ class GEOS5FPConnection:
         
         Communicates specific circumstances using exception classes.
         """
-        from .exceptions import GEOS5FPDayNotAvailable, GEOS5FPGranuleNotAvailable, FailedGEOS5FPDownload
+        from .exceptions import GEOS5FPDayNotAvailable, GEOS5FPGranuleNotAvailable, FailedGEOS5FPDownload, GEOS5FPSSLError
         from .validate_GEOS5FP_NetCDF_file import validate_GEOS5FP_NetCDF_file
 
+
+
         # GEOS-5 FP: check remote existence and generate filename if needed
-        head_resp = requests.head(URL)
+        try:
+            head_resp = make_head_request_with_ssl_fallback(URL)
+        except SSLError as e:
+            logger.error(f"SSL connection failed for URL: {URL}")
+            logger.error(f"SSL error details: {e}")
+            raise GEOS5FPSSLError(f"Failed to establish SSL connection", original_error=e, url=URL)
+        except Exception as e:
+            logger.error(f"Failed to check remote file existence: {e}")
+            raise FailedGEOS5FPDownload(f"Connection error: {e}")
         if head_resp.status_code == 404:
             directory_URL = posixpath.dirname(URL)
-            dir_resp = requests.head(directory_URL)
-            if dir_resp.status_code == 404:
-                raise GEOS5FPDayNotAvailable(directory_URL)
-            else:
-                raise GEOS5FPGranuleNotAvailable(URL)
+            try:
+                dir_resp = make_head_request_with_ssl_fallback(directory_URL)
+                if dir_resp.status_code == 404:
+                    raise GEOS5FPDayNotAvailable(directory_URL)
+                else:
+                    raise GEOS5FPGranuleNotAvailable(URL)
+            except SSLError as e:
+                logger.error(f"SSL connection failed for directory URL: {directory_URL}")
+                raise GEOS5FPSSLError(f"Failed to establish SSL connection to directory", original_error=e, url=directory_URL)
+            except Exception as e:
+                logger.error(f"Failed to check directory existence: {e}")
+                raise FailedGEOS5FPDownload(f"Connection error checking directory: {e}")
 
         if filename is None:
             filename = self.download_filename(URL)

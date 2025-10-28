@@ -8,7 +8,9 @@ from os.path import exists, getsize
 from shutil import move
 from os import makedirs
 import requests
-from requests.exceptions import ChunkedEncodingError, ConnectionError
+from requests.exceptions import ChunkedEncodingError, ConnectionError, SSLError
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from tqdm import tqdm as std_tqdm
 import colored_logging as cl
 import logging
@@ -78,14 +80,55 @@ def download_file(
                 logger.warning(f"removing zero-size corrupted file: {partial_filename}")
                 os.remove(expanded_partial_filename)
 
+            # Create robust session with SSL error handling
+            def create_robust_session():
+                session = requests.Session()
+                retry_strategy = Retry(
+                    total=2,
+                    status_forcelist=[429, 500, 502, 503, 504],
+                    backoff_factor=1,
+                    allowed_methods=["HEAD", "GET", "OPTIONS"]
+                )
+                adapter = HTTPAdapter(max_retries=retry_strategy)
+                session.mount("http://", adapter)
+                session.mount("https://", adapter)
+                return session
+
+            def download_with_ssl_fallback(url, stream=True, timeout=120):
+                """Download with SSL error handling and fallback strategies."""
+                session = create_robust_session()
+                
+                # Try with default SSL settings first
+                try:
+                    logger.debug(f"attempting download with default SSL: {url}")
+                    response = session.get(url, stream=stream, timeout=timeout, verify=True)
+                    response.raise_for_status()
+                    return response
+                except SSLError as e:
+                    logger.warning(f"SSL error during download: {e}")
+                    
+                    # Try with SSL verification disabled as fallback
+                    try:
+                        logger.warning(f"retrying download with SSL verification disabled: {url}")
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore")
+                            response = session.get(url, stream=stream, timeout=timeout, verify=False)
+                            response.raise_for_status()
+                            return response
+                    except Exception as fallback_e:
+                        logger.error(f"Download failed even with SSL verification disabled: {fallback_e}")
+                        raise SSLError(f"Failed to download from {url} due to SSL issues. Original error: {e}")
+                except Exception as e:
+                    logger.error(f"Download request failed: {e}")
+                    raise
+
             # Start timer for download duration
             t = TicToc()
             t.tic()
             logger.info(f"downloading with requests: {URL} -> {expanded_partial_filename}")
             try:
-                # Initiate HTTP GET request with streaming
-                response = requests.get(URL, stream=True, timeout=120)
-                response.raise_for_status()
+                # Initiate HTTP GET request with streaming and SSL fallback
+                response = download_with_ssl_fallback(URL, stream=True, timeout=120)
                 # Get total file size from response headers (if available)
                 total = int(response.headers.get('content-length', 0))
                 # Open temporary file for writing in binary mode
@@ -114,13 +157,14 @@ def download_file(
                                 f.write(chunk)
                                 bar.update(len(chunk))
                                 bar.refresh()
-            except (ChunkedEncodingError, ConnectionError) as e:
-                # Handle network errors: log, clean up, retry if possible
-                logger.error(f"Network error during download: {e}")
+            except (ChunkedEncodingError, ConnectionError, SSLError) as e:
+                # Handle network and SSL errors: log, clean up, retry if possible
+                error_type = "SSL" if isinstance(e, SSLError) else "Network"
+                logger.error(f"{error_type} error during download: {e}")
                 if exists(expanded_partial_filename):
                     os.remove(expanded_partial_filename)
                 if retries == 0:
-                    raise IOError(f"requests download failed: {URL} -> {partial_filename}")
+                    raise IOError(f"requests download failed ({error_type} error): {URL} -> {partial_filename}")
                 logger.warning(f"waiting {wait_seconds} seconds for retry")
                 sleep(wait_seconds)
                 continue
