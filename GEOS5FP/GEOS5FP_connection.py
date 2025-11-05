@@ -8,8 +8,9 @@ from os import makedirs
 from os.path import expanduser, exists, getsize
 from shutil import move
 from time import sleep
-from typing import List, Union, Any, Tuple
+from typing import List, Union, Any, Tuple, Dict, Optional
 import posixpath
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import colored_logging as cl
 import numpy as np
 import pandas as pd
@@ -104,14 +105,203 @@ def make_head_request_with_ssl_fallback(url, timeout=30):
         logger.error(f"HEAD request failed: {e}")
         raise
 from rasters import Raster, RasterGeometry
+try:
+    from shapely.geometry import Point, MultiPoint
+except ImportError:
+    # Fallback if shapely not available
+    Point = None
+    MultiPoint = None
 
 from .constants import *
 from .exceptions import *
 from .HTTP_listing import HTTP_listing
+
+# GEOS-5 FP Variable Configuration Registry
+GEOS5FP_VARIABLES = {
+    'SFMC': {
+        'name': 'top layer soil moisture',
+        'product': 'tavg1_2d_lnd_Nx',
+        'variable': 'SFMC',
+        'interval': 1,
+        'min_value': 0,
+        'max_value': 1,
+        'exclude_values': [1],
+        'cmap': 'SM_CMAP'
+    },
+    'LAI': {
+        'name': 'leaf area index',
+        'product': 'tavg1_2d_lnd_Nx',
+        'variable': 'LAI',
+        'interval': 1,
+        'min_value': 0,
+        'max_value': 10,
+        'cmap': 'NDVI_CMAP'
+    },
+    'LHLAND': {
+        'name': 'latent heat flux land',
+        'product': 'tavg1_2d_lnd_Nx',
+        'variable': 'LHLAND',
+        'interval': 1,
+        'exclude_values': [1.e+15]
+    },
+    'EFLUX': {
+        'name': 'total latent energy flux',
+        'product': 'tavg1_2d_flx_Nx',
+        'variable': 'EFLUX',
+        'interval': 1
+    },
+    'PARDR': {
+        'name': 'PARDR',
+        'product': 'tavg1_2d_lnd_Nx',
+        'variable': 'PARDR',
+        'interval': 1,
+        'post_process': lambda x: rt.clip(x, 0, None)
+    },
+    'PARDF': {
+        'name': 'PARDF',
+        'product': 'tavg1_2d_lnd_Nx',
+        'variable': 'PARDF',
+        'interval': 1,
+        'post_process': lambda x: rt.clip(x, 0, None)
+    },
+    'AOT': {
+        'name': 'AOT',
+        'product': 'tavg3_2d_aer_Nx',
+        'variable': 'TOTEXTTAU',
+        'expected_hours': [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
+    },
+    'COT': {
+        'name': 'COT',
+        'product': 'tavg1_2d_rad_Nx',
+        'variable': 'TAUTOT',
+        'interval': 1
+    },
+    'TS': {
+        'name': 'Ts',
+        'product': 'tavg1_2d_slv_Nx',
+        'variable': 'TS',
+        'interval': 1
+    },
+    'T2M': {
+        'name': 'Ta',
+        'product': 'tavg1_2d_slv_Nx',
+        'variable': 'T2M',
+        'interval': 1
+    },
+    'T2MMIN': {
+        'name': 'Tmin',
+        'product': 'inst3_2d_asm_Nx',
+        'variable': 'T2MMIN',
+        'interval': 3
+    },
+    'PS': {
+        'name': 'surface pressure',
+        'product': 'tavg1_2d_slv_Nx',
+        'variable': 'PS',
+        'interval': 1
+    },
+    'QV2M': {
+        'name': 'Q',
+        'product': 'tavg1_2d_slv_Nx',
+        'variable': 'QV2M',
+        'interval': 1
+    },
+    'TQV': {
+        'name': 'vapor_gccm',
+        'product': 'inst3_2d_asm_Nx',
+        'variable': 'TQV',
+        'interval': 3,
+        'post_process': lambda x: np.clip(x, 0, None)
+    },
+    'TO3': {
+        'name': 'ozone_cm',
+        'product': 'inst3_2d_asm_Nx',
+        'variable': 'TO3',
+        'interval': 3,
+        'post_process': lambda x: np.clip(x, 0, None)
+    },
+    'U2M': {
+        'name': 'U2M',
+        'product': 'inst3_2d_asm_Nx',
+        'variable': 'U2M',
+        'interval': 3
+    },
+    'V2M': {
+        'name': 'V2M',
+        'product': 'inst3_2d_asm_Nx',
+        'variable': 'V2M',
+        'interval': 3
+    },
+    'CO2SC': {
+        'name': 'CO2SC',
+        'product': 'tavg3_2d_chm_Nx',
+        'variable': 'CO2SC',
+        'expected_hours': [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
+    },
+    'SWGNT': {
+        'name': 'SWin',
+        'product': 'tavg1_2d_rad_Nx',
+        'variable': 'SWGNT',
+        'interval': 1,
+        'post_process': lambda x: np.clip(x, 0, None)
+    },
+    'SWTDN': {
+        'name': 'SWTDN',
+        'product': 'tavg1_2d_rad_Nx',
+        'variable': 'SWTDN',
+        'interval': 1,
+        'post_process': lambda x: np.clip(x, 0, None)
+    },
+    'ALBVISDR': {
+        'name': 'ALBVISDR',
+        'product': 'tavg1_2d_rad_Nx',
+        'variable': 'ALBVISDR',
+        'interval': 1,
+        'post_process': lambda x: np.clip(x, 0, 1)
+    },
+    'ALBVISDF': {
+        'name': 'ALBVISDF',
+        'product': 'tavg1_2d_rad_Nx',
+        'variable': 'ALBVISDF',
+        'interval': 1,
+        'post_process': lambda x: np.clip(x, 0, 1)
+    },
+    'ALBNIRDF': {
+        'name': 'ALBNIRDF',
+        'product': 'tavg1_2d_rad_Nx',
+        'variable': 'ALBNIRDF',
+        'interval': 1,
+        'post_process': lambda x: np.clip(x, 0, 1)
+    },
+    'ALBNIRDR': {
+        'name': 'ALBNIRDR',
+        'product': 'tavg1_2d_rad_Nx',
+        'variable': 'ALBNIRDR',
+        'interval': 1,
+        'post_process': lambda x: np.clip(x, 0, 1)
+    },
+    'ALBEDO': {
+        'name': 'ALBEDO',
+        'product': 'tavg1_2d_rad_Nx',
+        'variable': 'ALBEDO',
+        'interval': 1,
+        'post_process': lambda x: np.clip(x, 0, 1)
+    }
+}
 from .GEOS5FP_granule import GEOS5FPGranule
 from .timer import Timer
 from .downscaling import linear_downscale, bias_correct
 from .download_file import download_file
+
+# Type aliases for flexible geometry support
+GeometryType = Union[
+    RasterGeometry,
+    List[Union['Point', Tuple[float, float]]],  # List of Point objects or coordinate tuples
+    'MultiPoint',  # MultiPoint from shapely or rasters
+    None
+]
+
+TimeType = Union[datetime, str, List[Union[datetime, str]]]
 
 logger = logging.getLogger(__name__)
 
@@ -666,72 +856,270 @@ class GEOS5FPConnection:
 
         return interpolated_data
 
+    def _normalize_geometry(self, geometry: GeometryType) -> Optional[RasterGeometry]:
+        """Normalize various geometry input types to RasterGeometry or handle points."""
+        if geometry is None:
+            return None
+        
+        if isinstance(geometry, RasterGeometry):
+            return geometry
+        
+        # Handle list of points or coordinate tuples
+        if isinstance(geometry, list):
+            # For now, return None to indicate point-based extraction
+            # This will be handled differently in the extraction logic
+            return None
+        
+        # Handle MultiPoint objects
+        if hasattr(geometry, 'geoms') or (hasattr(geometry, '__class__') and 'MultiPoint' in str(geometry.__class__)):
+            return None  # Point-based extraction
+        
+        return geometry
 
-    def SFMC(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def _extract_at_points(self, raster: Raster, points: Union[List, 'MultiPoint']) -> pd.Series:
+        """Extract raster values at specific point locations."""
+        if hasattr(points, 'geoms'):  # MultiPoint object
+            coords = [(point.x, point.y) for point in points.geoms]
+        elif isinstance(points, list):
+            coords = []
+            for point in points:
+                if hasattr(point, 'x') and hasattr(point, 'y'):  # Point object
+                    coords.append((point.x, point.y))
+                elif isinstance(point, (tuple, list)) and len(point) == 2:  # Coordinate tuple
+                    coords.append((float(point[0]), float(point[1])))
+                else:
+                    raise ValueError(f"Invalid point format: {point}")
+        else:
+            raise ValueError(f"Unsupported points type: {type(points)}")
+        
+        # Extract values using raster sampling
+        values = []
+        for x, y in coords:
+            try:
+                value = raster.sample([(x, y)])[0]
+                values.append(value)
+            except Exception as e:
+                logger.warning(f"Failed to sample at ({x}, {y}): {e}")
+                values.append(np.nan)
+        
+        return pd.Series(values, index=range(len(coords)))
+
+    def get_variable(
+            self,
+            variable_name: str,
+            time_UTC: TimeType,
+            geometry: GeometryType = None,
+            resampling: str = None,
+            return_time_series: bool = None,
+            max_workers: int = 4,
+            **kwargs
+    ) -> Union[Raster, pd.DataFrame, pd.Series]:
         """
-        top soil layer moisture content cubic meters per cubic meters
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
+        Consolidated method for retrieving GEOS-5 FP variables with time-series and flexible geometry support.
+        
+        Args:
+            variable_name: Name of the variable (e.g., 'SFMC', 'LAI', 'T2M')
+            time_UTC: Single datetime/str or list of datetimes/strs for time-series
+            geometry: RasterGeometry, list of Points, MultiPoint, or None
+            resampling: Resampling method for raster operations
+            return_time_series: Force return as time-series DataFrame (auto-detected if None)
+            max_workers: Maximum threads for parallel processing
+            **kwargs: Additional parameters passed to interpolate method
+            
+        Returns:
+            - Single time + RasterGeometry: Raster
+            - Single time + Points: pd.Series with point values
+            - Multiple times + RasterGeometry: pd.DataFrame with time index, raster columns
+            - Multiple times + Points: pd.DataFrame with time index, point columns
+        """
+        # Validate variable name
+        if variable_name not in GEOS5FP_VARIABLES:
+            raise ValueError(f"Unknown variable: {variable_name}. Available: {list(GEOS5FP_VARIABLES.keys())}")
+        
+        var_config = GEOS5FP_VARIABLES[variable_name]
+        
+        # Normalize time input
+        is_time_series = isinstance(time_UTC, list)
+        if return_time_series is None:
+            return_time_series = is_time_series
+        
+        times = time_UTC if is_time_series else [time_UTC]
+        
+        # Normalize geometry
+        normalized_geometry = self._normalize_geometry(geometry)
+        is_point_extraction = normalized_geometry is None and geometry is not None
+        
+        # Parse times
+        parsed_times = []
+        for t in times:
+            if isinstance(t, str):
+                parsed_times.append(parser.parse(t))
+            else:
+                parsed_times.append(t)
+        
+        # Prepare interpolation parameters from config and kwargs
+        interp_params = {
+            'product': var_config['product'],
+            'variable': var_config['variable'],
+            'geometry': normalized_geometry,
+            'resampling': resampling,
+            'min_value': var_config.get('min_value'),
+            'max_value': var_config.get('max_value'),
+            'exclude_values': var_config.get('exclude_values'),
+            'interval': var_config.get('interval'),
+            'expected_hours': var_config.get('expected_hours'),
+            'cmap': var_config.get('cmap')
+        }
+        
+        # Override with any provided kwargs
+        interp_params.update(kwargs)
+        
+        # Remove None values
+        interp_params = {k: v for k, v in interp_params.items() if v is not None}
+        
+        def process_single_time(time_utc):
+            """Process a single time point."""
+            logger.info(
+                f"retrieving {cl.name(var_config['name'])} "
+                f"from GEOS-5 FP {cl.name(var_config['product'])} {cl.name(var_config['variable'])} "
+                f"for " + cl.time(f"{time_utc:%Y-%m-%d %H:%M} UTC")
+            )
+            
+            # Get raster data via interpolation
+            raster = self.interpolate(time_UTC=time_utc, **interp_params)
+            
+            # Apply post-processing if defined
+            if 'post_process' in var_config:
+                raster = var_config['post_process'](raster)
+            
+            # Apply colormap if defined
+            if 'cmap' in var_config:
+                cmap_obj = globals().get(var_config['cmap'])
+                if cmap_obj is not None:
+                    raster.cmap = cmap_obj
+            
+            return time_utc, raster
+        
+        # Process times (parallel for multiple times)
+        if len(parsed_times) == 1:
+            # Single time - process directly
+            time_utc, raster = process_single_time(parsed_times[0])
+            
+            if is_point_extraction:
+                # Extract at points
+                values = self._extract_at_points(raster, geometry)
+                if return_time_series:
+                    # Return as DataFrame with single time index
+                    df = pd.DataFrame(values).T
+                    df.index = [time_utc]
+                    df.index.name = 'time_UTC'
+                    return df
+                else:
+                    return values
+            else:
+                # Return raster
+                if return_time_series:
+                    # Return as DataFrame with single time index
+                    df = pd.DataFrame([raster])
+                    df.index = [time_utc]
+                    df.index.name = 'time_UTC'
+                    df.columns = [variable_name]
+                    return df
+                else:
+                    return raster
+        
+        else:
+            # Multiple times - process in parallel
+            results = []
+            
+            if max_workers > 1:
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    future_to_time = {executor.submit(process_single_time, t): t for t in parsed_times}
+                    
+                    for future in as_completed(future_to_time):
+                        time_utc = future_to_time[future]
+                        try:
+                            result = future.result()
+                            results.append(result)
+                        except Exception as e:
+                            logger.error(f"Failed to process time {time_utc}: {e}")
+                            results.append((time_utc, None))
+            else:
+                # Sequential processing
+                for t in parsed_times:
+                    try:
+                        result = process_single_time(t)
+                        results.append(result)
+                    except Exception as e:
+                        logger.error(f"Failed to process time {t}: {e}")
+                        results.append((t, None))
+            
+            # Sort results by time
+            results.sort(key=lambda x: x[0])
+            
+            # Create time-series DataFrame
+            if is_point_extraction:
+                # Point extraction - DataFrame with times as rows, points as columns
+                point_data = []
+                time_index = []
+                
+                for time_utc, raster in results:
+                    if raster is not None:
+                        values = self._extract_at_points(raster, geometry)
+                        point_data.append(values)
+                        time_index.append(time_utc)
+                
+                if point_data:
+                    df = pd.DataFrame(point_data)
+                    df.index = pd.Index(time_index, name='time_UTC')
+                    df.columns = [f'point_{i}' for i in range(len(df.columns))]
+                    return df
+                else:
+                    # Return empty DataFrame with proper structure
+                    return pd.DataFrame(index=pd.Index([], name='time_UTC'))
+            
+            else:
+                # Raster data - DataFrame with times as rows, single variable column
+                raster_data = []
+                time_index = []
+                
+                for time_utc, raster in results:
+                    if raster is not None:
+                        raster_data.append(raster)
+                        time_index.append(time_utc)
+                
+                if raster_data:
+                    df = pd.DataFrame({variable_name: raster_data})
+                    df.index = pd.Index(time_index, name='time_UTC')
+                    return df
+                else:
+                    # Return empty DataFrame with proper structure
+                    return pd.DataFrame(index=pd.Index([], name='time_UTC'), columns=[variable_name])
+
+
+    def SFMC(self, time_UTC: TimeType, geometry: GeometryType = None, resampling: str = None) -> Union[Raster, pd.DataFrame, pd.Series]:
+        """
+        Top soil layer moisture content cubic meters per cubic meters.
+        
+        :param time_UTC: Single datetime/str or list for time-series
+        :param geometry: RasterGeometry, list of Points, MultiPoint, or None
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of soil moisture
+        :return: Raster (single time+raster), Series (single time+points), or DataFrame (time-series)
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-
-        NAME = "top layer soil moisture"
-        PRODUCT = "tavg1_2d_lnd_Nx"
-        VARIABLE = "SFMC"
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
-        )
-
-        return self.interpolate(
-            time_UTC=time_UTC,
-            product=PRODUCT,
-            variable=VARIABLE,
-            geometry=geometry,
-            resampling=resampling,
-            interval=1,
-            min_value=0,
-            max_value=1,
-            exclude_values=[1],
-            cmap=SM_CMAP
-        )
+        return self.get_variable('SFMC', time_UTC, geometry, resampling)
 
     SM = SFMC
 
-    def LAI(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def LAI(self, time_UTC: TimeType, geometry: GeometryType = None, resampling: str = None) -> Union[Raster, pd.DataFrame, pd.Series]:
         """
-        leaf area index
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
+        Leaf area index.
+        
+        :param time_UTC: Single datetime/str or list for time-series
+        :param geometry: RasterGeometry, list of Points, MultiPoint, or None
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of LAI
+        :return: Raster (single time+raster), Series (single time+points), or DataFrame (time-series)
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME = "leaf area index"
-        PRODUCT = "tavg1_2d_lnd_Nx"
-        VARIABLE = "LAI"
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
-        )
-
-        return self.interpolate(
-            time_UTC=time_UTC,
-            product=PRODUCT,
-            variable=VARIABLE,
-            geometry=geometry,
-            resampling=resampling,
-            interval=1,
-            min_value=0,
-            max_value=10,
-            cmap=NDVI_CMAP
-        )
+        return self.get_variable('LAI', time_UTC, geometry, resampling)
 
     def NDVI(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
@@ -748,34 +1136,16 @@ class GEOS5FPConnection:
 
         return NDVI
 
-    def LHLAND(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def LHLAND(self, time_UTC: TimeType, geometry: GeometryType = None, resampling: str = None) -> Union[Raster, pd.DataFrame, pd.Series]:
         """
-        latent heat flux in watts per square meter
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
+        Latent heat flux land in watts per square meter.
+        
+        :param time_UTC: Single datetime/str or list for time-series
+        :param geometry: RasterGeometry, list of Points, MultiPoint, or None
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of soil moisture
+        :return: Raster (single time+raster), Series (single time+points), or DataFrame (time-series)
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME = "latent heat flux land"
-        PRODUCT = "tavg1_2d_lnd_Nx"
-        VARIABLE = "LHLAND"
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
-        )
-
-        return self.interpolate(
-            time_UTC=time_UTC,
-            product=PRODUCT,
-            variable=VARIABLE,
-            geometry=geometry,
-            resampling=resampling,
-            interval=1,
-            exclude_values=[1.e+15]
-        )
+        return self.get_variable('LHLAND', time_UTC, geometry, resampling)
 
     def EFLUX(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
@@ -905,30 +1275,16 @@ class GEOS5FPConnection:
 
         return self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
 
-    def Ts_K(
-            self,
-            time_UTC: Union[datetime, str],
-            geometry: RasterGeometry = None,
-            resampling: str = None) -> Raster:
+    def Ts_K(self, time_UTC: TimeType, geometry: GeometryType = None, resampling: str = None) -> Union[Raster, pd.DataFrame, pd.Series]:
         """
-        surface temperature (Ts) in Kelvin
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
+        Surface temperature (Ts) in Kelvin.
+        
+        :param time_UTC: Single datetime/str or list for time-series
+        :param geometry: RasterGeometry, list of Points, MultiPoint, or None
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of Ta
+        :return: Raster (single time+raster), Series (single time+points), or DataFrame (time-series)
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME = "Ts"
-        PRODUCT = "tavg1_2d_slv_Nx"
-        VARIABLE = "TS"
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
-        )
-
-        return self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
+        return self.get_variable('TS', time_UTC, geometry, resampling)
 
     def Ta_K(
             self,
@@ -1048,26 +1404,16 @@ class GEOS5FPConnection:
     def Ta_C(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         return self.Ta_K(time_UTC=time_UTC, geometry=geometry, resampling=resampling) - 273.15
 
-    def PS(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def PS(self, time_UTC: TimeType, geometry: GeometryType = None, resampling: str = None) -> Union[Raster, pd.DataFrame, pd.Series]:
         """
-        surface pressure in Pascal
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
+        Surface pressure in Pascal.
+        
+        :param time_UTC: Single datetime/str or list for time-series
+        :param geometry: RasterGeometry, list of Points, MultiPoint, or None  
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of surface pressure
+        :return: Raster (single time+raster), Series (single time+points), or DataFrame (time-series)
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME = "surface pressure"
-        PRODUCT = "tavg1_2d_slv_Nx"
-        VARIABLE = "PS"
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
-        )
-
-        return self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
+        return self.get_variable('PS', time_UTC, geometry, resampling)
 
     def Q(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
