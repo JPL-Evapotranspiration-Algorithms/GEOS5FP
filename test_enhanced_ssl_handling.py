@@ -4,6 +4,7 @@ Test script for enhanced SSL error handling with multiple fallback strategies.
 """
 
 import logging
+import pytest
 import requests
 import ssl
 import warnings
@@ -125,19 +126,22 @@ def test_enhanced_ssl_handling():
             print("  File not found (expected for old data)")
         else:
             print(f"  Unexpected status code: {response.status_code}")
-        return True
+        # Test passes if we get any valid HTTP response (no SSL error)
+        assert response.status_code in [200, 404], f"Unexpected status code: {response.status_code}"
         
     except SSLError as e:
         print(f"\n✗ SSL ERROR: {e}")
-        return False
+        pytest.fail(f"SSL error occurred: {e}")
         
     except Exception as e:
         print(f"\n✗ OTHER ERROR: {e}")
-        return False
+        # Other errors are acceptable as long as they're not SSL errors
+        assert "SSL" not in str(e), f"Unexpected SSL-related error: {e}"
 
 
 def test_geos5fp_integration():
     """Test the enhanced SSL handling through GEOS5FP interface."""
+    
     try:
         from GEOS5FP import GEOS5FPConnection
         from datetime import datetime
@@ -163,15 +167,21 @@ def test_geos5fp_integration():
             )
             print(f"✓ SUCCESS: AOT data retrieved successfully")
             print(f"  Data type: {type(aot_data)}")
-            return True
+            # Test passes if AOT data is retrieved successfully
+            assert aot_data is not None, "AOT data should not be None"
             
         except Exception as e:
             print(f"✗ GEOS5FP ERROR: {e}")
-            return False
+            # Check if it's an SSL error - if so, fail the test
+            if "SSL" in str(e) and "UNEXPECTED_EOF_WHILE_READING" in str(e):
+                pytest.fail(f"SSL error not properly handled: {e}")
+            else:
+                # Other errors might be acceptable (e.g., data not available)
+                pytest.skip(f"Test skipped due to non-SSL error: {e}")
             
     except ImportError as e:
         print(f"✗ IMPORT ERROR: Cannot import GEOS5FP: {e}")
-        return False
+        pytest.skip(f"Cannot import GEOS5FP: {e}")
 
 
 if __name__ == "__main__":

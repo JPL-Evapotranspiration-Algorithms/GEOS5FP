@@ -4,6 +4,7 @@ Test the specific URL that was failing in the original error.
 """
 
 import logging
+import pytest
 from datetime import datetime
 from GEOS5FP import GEOS5FPConnection
 
@@ -31,7 +32,8 @@ def test_problematic_url():
         # Attempt to download the specific file that was failing
         result = geos5fp.download_file(test_url)
         print(f"✓ SUCCESS: File downloaded successfully: {result}")
-        return True
+        # Test passes if file downloads successfully
+        assert result is not None, "Download result should not be None"
         
     except Exception as e:
         print(f"Expected result - Caught exception: {type(e).__name__}: {e}")
@@ -39,10 +41,11 @@ def test_problematic_url():
         # Check if it's still an SSL error
         if "SSL" in str(e) and "UNEXPECTED_EOF_WHILE_READING" in str(e):
             print("✗ FAILURE: Original SSL error still occurs!")
-            return False
+            pytest.fail(f"Original SSL error was not handled: {e}")
         else:
             print("✓ SUCCESS: SSL error was handled gracefully (got different error type)")
-            return True
+            # Test passes if we get a different type of error (not the original SSL error)
+            assert "UNEXPECTED_EOF_WHILE_READING" not in str(e), "Original SSL error should be handled"
 
 def test_aot_interpolation():
     """Test the specific AOT interpolation that was failing."""
@@ -67,7 +70,8 @@ def test_aot_interpolation():
         )
         print(f"✓ SUCCESS: AOT interpolation completed successfully")
         print(f"  Result type: {type(aot_result)}")
-        return True
+        # Test passes if AOT interpolation completes successfully
+        assert aot_result is not None, "AOT result should not be None"
         
     except Exception as e:
         print(f"Caught exception during AOT interpolation: {type(e).__name__}: {e}")
@@ -75,10 +79,11 @@ def test_aot_interpolation():
         # Check if it's still an SSL error
         if "SSL" in str(e) and "UNEXPECTED_EOF_WHILE_READING" in str(e):
             print("✗ FAILURE: Original SSL error still occurs!")
-            return False
+            pytest.fail(f"Original SSL error was not handled: {e}")
         else:
             print("✓ SUCCESS: SSL error was handled gracefully (got different error type)")
-            return True
+            # Test passes if we get a different type of error (not the original SSL error)
+            assert "UNEXPECTED_EOF_WHILE_READING" not in str(e), "Original SSL error should be handled"
 
 if __name__ == "__main__":
     print("Testing Enhanced SSL Handling Against Original Failure")
