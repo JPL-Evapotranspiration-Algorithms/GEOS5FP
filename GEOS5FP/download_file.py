@@ -1,4 +1,5 @@
 import os
+import ssl
 import sys
 import warnings
 from datetime import datetime
@@ -11,6 +12,7 @@ import requests
 from requests.exceptions import ChunkedEncodingError, ConnectionError, SSLError
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from urllib3.util.ssl_ import create_urllib3_context
 from tqdm import tqdm as std_tqdm
 import colored_logging as cl
 import logging
@@ -81,42 +83,82 @@ def download_file(
                 os.remove(expanded_partial_filename)
 
             # Create robust session with SSL error handling
-            def create_robust_session():
+            def create_robust_session(ssl_context=None):
                 session = requests.Session()
                 retry_strategy = Retry(
-                    total=2,
+                    total=1,
                     status_forcelist=[429, 500, 502, 503, 504],
                     backoff_factor=1,
                     allowed_methods=["HEAD", "GET", "OPTIONS"]
                 )
                 adapter = HTTPAdapter(max_retries=retry_strategy)
+                
+                # Configure SSL context if provided
+                if ssl_context:
+                    adapter.init_poolmanager(
+                        ssl_context=ssl_context,
+                        socket_options=HTTPAdapter.DEFAULT_SOCKET_OPTIONS
+                    )
+                
                 session.mount("http://", adapter)
                 session.mount("https://", adapter)
                 return session
 
+            def create_legacy_ssl_context():
+                """Create a legacy SSL context that's more permissive for older servers."""
+                context = create_urllib3_context()
+                context.set_ciphers('DEFAULT@SECLEVEL=1')
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                # Allow legacy renegotiation
+                context.options &= ~ssl.OP_NO_RENEGOTIATION
+                return context
+
             def download_with_ssl_fallback(url, stream=True, timeout=120):
-                """Download with SSL error handling and fallback strategies."""
-                session = create_robust_session()
+                """Download with SSL error handling and multiple fallback strategies."""
                 
-                # Try with default SSL settings first
+                # Strategy 1: Default SSL settings
                 try:
                     logger.debug(f"attempting download with default SSL: {url}")
+                    session = create_robust_session()
                     response = session.get(url, stream=stream, timeout=timeout, verify=True)
                     response.raise_for_status()
                     return response
                 except SSLError as e:
-                    logger.warning(f"SSL error during download: {e}")
+                    logger.warning(f"SSL error during download with default settings: {e}")
                     
-                    # Try with SSL verification disabled as fallback
+                    # Strategy 2: Legacy SSL context
                     try:
-                        logger.warning(f"retrying download with SSL verification disabled: {url}")
+                        logger.warning(f"retrying download with legacy SSL context: {url}")
+                        legacy_context = create_legacy_ssl_context()
+                        session = create_robust_session(ssl_context=legacy_context)
                         with warnings.catch_warnings():
                             warnings.simplefilter("ignore")
                             response = session.get(url, stream=stream, timeout=timeout, verify=False)
                             response.raise_for_status()
                             return response
+                    except SSLError as fallback_e:
+                        logger.warning(f"Legacy SSL context failed: {fallback_e}")
+                        
+                        # Strategy 3: Minimal session with no retries
+                        try:
+                            logger.warning(f"retrying download with minimal SSL configuration: {url}")
+                            session = requests.Session()
+                            # No retries for this final attempt
+                            adapter = HTTPAdapter(max_retries=0)
+                            session.mount("https://", adapter)
+                            session.mount("http://", adapter)
+                            
+                            with warnings.catch_warnings():
+                                warnings.simplefilter("ignore")
+                                response = session.get(url, stream=stream, timeout=60, verify=False)
+                                response.raise_for_status()
+                                return response
+                        except Exception as final_e:
+                            logger.error(f"All SSL download strategies failed. Final error: {final_e}")
+                            raise SSLError(f"Failed to download from {url} after trying multiple SSL strategies. Original error: {e}")
                     except Exception as fallback_e:
-                        logger.error(f"Download failed even with SSL verification disabled: {fallback_e}")
+                        logger.error(f"Download failed with legacy SSL context: {fallback_e}")
                         raise SSLError(f"Failed to download from {url} due to SSL issues. Original error: {e}")
                 except Exception as e:
                     logger.error(f"Download request failed: {e}")
