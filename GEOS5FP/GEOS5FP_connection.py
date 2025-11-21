@@ -1517,21 +1517,22 @@ class GEOS5FPConnection:
     def variable(
             self,
             variable_name: Union[str, List[str]],
-            time_UTC: Union[datetime, str] = None,
+            time_UTC: Union[datetime, str, List[datetime], List[str], pd.Series] = None,
             time_range: Tuple[Union[datetime, str], Union[datetime, str]] = None,
             dataset: str = None,
-            geometry: RasterGeometry = None,
+            geometry: Union[RasterGeometry, Point, MultiPoint, List, gpd.GeoSeries] = None,
             resampling: str = None,
-            lat: float = None,
-            lon: float = None,
+            lat: Union[float, List[float], pd.Series] = None,
+            lon: Union[float, List[float], pd.Series] = None,
             dropna: bool = True,
-            **kwargs) -> Union[Raster, pd.DataFrame]:
+            **kwargs) -> Union[Raster, gpd.GeoDataFrame]:
         """
         General-purpose variable retrieval method that can query any variable from any dataset.
         
         This method provides a flexible interface for retrieving GEOS-5 FP data, supporting both:
         - Raster queries (for spatial data over a region)
         - Point queries (for time-series at specific coordinates using OPeNDAP)
+        - Batch spatio-temporal queries (multiple points at different times)
         
         Parameters
         ----------
@@ -1543,11 +1544,14 @@ class GEOS5FPConnection:
             - A predefined variable name from GEOS5FP_VARIABLES (e.g., "Ta_K", "SM", "SWin")
             - A raw GEOS-5 FP variable name (e.g., "T2M", "SFMC", "SWGDN")
             When multiple variables are requested with point geometry, each variable becomes a column.
-        time_UTC : datetime or str, optional
-            Single date/time in UTC for raster queries. Required if time_range not provided.
+        time_UTC : datetime, str, list, or Series, optional
+            Date/time in UTC. Can be:
+            - Single datetime or str for raster queries or single point query
+            - List of datetimes or Series for batch spatio-temporal queries
+            Required if time_range not provided.
         time_range : tuple of (start, end), optional
             Time range (start_time, end_time) for time-series point queries.
-            Use this with lat/lon for efficient multi-timestep queries.
+            Use this with lat/lon for efficient multi-timestep queries at same location.
         dataset : str, optional
             GEOS-5 FP product/dataset name (e.g., "tavg1_2d_slv_Nx", "inst3_2d_asm_Nx").
             If not provided, will be looked up from GEOS5FP_VARIABLES.
@@ -1645,6 +1649,168 @@ class GEOS5FPConnection:
         # Validate inputs
         if time_UTC is None and time_range is None:
             raise ValueError("Either time_UTC or time_range must be provided")
+        
+        # Check for vectorized batch query (lists of times and geometries)
+        is_batch_query = False
+        if time_UTC is not None and time_range is None:
+            # Check if time_UTC is a list/Series
+            if isinstance(time_UTC, (list, pd.Series)):
+                is_batch_query = True
+            # Check if lat/lon are lists/Series
+            elif lat is not None and lon is not None:
+                if isinstance(lat, (list, pd.Series)) or isinstance(lon, (list, pd.Series)):
+                    is_batch_query = True
+            # Check if geometry is a GeoSeries
+            elif geometry is not None and isinstance(geometry, gpd.GeoSeries):
+                is_batch_query = True
+        
+        # Handle vectorized batch queries
+        if is_batch_query:
+            if not HAS_OPENDAP_SUPPORT:
+                raise ImportError(
+                    "Point query support requires xarray and netCDF4. "
+                    "Install with: conda install -c conda-forge xarray netcdf4"
+                )
+            
+            # Convert inputs to lists
+            if isinstance(time_UTC, pd.Series):
+                times = time_UTC.tolist()
+            elif isinstance(time_UTC, list):
+                times = time_UTC
+            else:
+                raise ValueError("For batch queries, time_UTC must be a list or Series")
+            
+            # Get geometries
+            if geometry is not None:
+                if isinstance(geometry, gpd.GeoSeries):
+                    geometries = geometry.tolist()
+                elif isinstance(geometry, list):
+                    geometries = geometry
+                else:
+                    raise ValueError("For batch queries with geometry, must provide GeoSeries or list")
+            elif lat is not None and lon is not None:
+                # Convert lat/lon to Point geometries
+                if isinstance(lat, pd.Series):
+                    lats = lat.tolist()
+                else:
+                    lats = lat if isinstance(lat, list) else [lat]
+                
+                if isinstance(lon, pd.Series):
+                    lons = lon.tolist()
+                else:
+                    lons = lon if isinstance(lon, list) else [lon]
+                
+                if len(lats) != len(lons):
+                    raise ValueError("lat and lon must have the same length")
+                
+                geometries = [Point(lon_val, lat_val) for lon_val, lat_val in zip(lons, lats)]
+            else:
+                raise ValueError("For batch queries, must provide geometry or lat/lon")
+            
+            # Validate lengths match
+            if len(times) != len(geometries):
+                raise ValueError(
+                    f"Number of times ({len(times)}) must match number of geometries ({len(geometries)})"
+                )
+            
+            # Parse time strings to datetime objects
+            parsed_times = []
+            for t in times:
+                if isinstance(t, str):
+                    parsed_times.append(parser.parse(t))
+                else:
+                    parsed_times.append(t)
+            
+            # Process each time-geometry pair
+            all_dfs = []
+            
+            logger.info(f"Processing {len(parsed_times)} spatio-temporal records...")
+            
+            for idx, (time_val, geom) in enumerate(zip(parsed_times, geometries)):
+                logger.info(f"Processing record {idx+1}/{len(parsed_times)}: {time_val} at {geom}")
+                
+                # Extract point coordinates
+                if isinstance(geom, Point):
+                    pt_lon, pt_lat = geom.x, geom.y
+                elif isinstance(geom, MultiPoint):
+                    # Use first point
+                    pt_lon, pt_lat = geom.geoms[0].x, geom.geoms[0].y
+                else:
+                    raise ValueError(f"Unsupported geometry type: {type(geom)}")
+                
+                # Query each variable for this point-time
+                point_data = {'time_UTC': time_val}
+                
+                for var_name in variable_names:
+                    # Determine dataset for this variable
+                    var_dataset = dataset
+                    if var_dataset is None:
+                        if var_name in GEOS5FP_VARIABLES:
+                            _, var_dataset, raw_variable = self._get_variable_info(var_name)
+                        else:
+                            raise ValueError(
+                                f"Dataset must be specified when using raw variable name '{var_name}'. "
+                                f"Known variables: {list(GEOS5FP_VARIABLES.keys())}"
+                            )
+                    else:
+                        # Use provided dataset, determine variable
+                        if var_name in GEOS5FP_VARIABLES:
+                            _, _, raw_variable = self._get_variable_info(var_name)
+                        else:
+                            raw_variable = var_name
+                    
+                    variable_opendap = raw_variable.lower()
+                    
+                    logger.info(f"  Querying {var_name} from {var_dataset}...")
+                    
+                    try:
+                        # Query small time window around target time
+                        time_window_start = time_val - timedelta(hours=2)
+                        time_window_end = time_val + timedelta(hours=2)
+                        
+                        result = query_geos5fp_point(
+                            dataset=var_dataset,
+                            variable=variable_opendap,
+                            lat=pt_lat,
+                            lon=pt_lon,
+                            time_range=(time_window_start, time_window_end),
+                            dropna=dropna
+                        )
+                        
+                        if len(result.df) == 0:
+                            logger.warning(f"No data found for point ({pt_lat}, {pt_lon}) at time {time_val}")
+                            point_data[var_name] = None
+                        else:
+                            # Find closest time
+                            time_diffs = abs(result.df.index - time_val)
+                            closest_idx = time_diffs.argmin()
+                            value = result.df.iloc[closest_idx][variable_opendap]
+                            point_data[var_name] = value
+                    
+                    except Exception as e:
+                        logger.warning(f"Failed to query {var_name} at ({pt_lat}, {pt_lon}), time {time_val}: {e}")
+                        point_data[var_name] = None
+                
+                # Add geometry
+                point_data['geometry'] = geom
+                all_dfs.append(point_data)
+            
+            # Create DataFrame from results
+            result_df = pd.DataFrame(all_dfs)
+            
+            # Set time as index
+            result_df = result_df.set_index('time_UTC')
+            
+            # Move geometry to end
+            if 'geometry' in result_df.columns:
+                cols = [c for c in result_df.columns if c != 'geometry']
+                cols.append('geometry')
+                result_df = result_df[cols]
+            
+            # Convert to GeoDataFrame
+            result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
+            
+            return result_gdf
         
         # Create Point geometry from lat/lon if provided
         if lat is not None and lon is not None:
