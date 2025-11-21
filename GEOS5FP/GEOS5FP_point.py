@@ -9,10 +9,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional, Tuple, Union
+import warnings
 
 import numpy as np
 import pandas as pd
 import xarray as xr
+
+# Suppress xarray SerializationWarning about ambiguous reference dates in GEOS-5 FP files
+warnings.filterwarnings('ignore', message='.*Ambiguous reference date string.*')
 
 
 @dataclass

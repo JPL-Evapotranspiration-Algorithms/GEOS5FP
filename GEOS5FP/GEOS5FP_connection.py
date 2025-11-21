@@ -1515,7 +1515,7 @@ class GEOS5FPConnection:
 
     def variable(
             self,
-            variable_name: str,
+            variable_name: Union[str, List[str]],
             time_UTC: Union[datetime, str] = None,
             time_range: Tuple[Union[datetime, str], Union[datetime, str]] = None,
             dataset: str = None,
@@ -1534,10 +1534,14 @@ class GEOS5FPConnection:
         
         Parameters
         ----------
-        variable_name : str
-            Name of the variable to retrieve. Can be either:
+        variable_name : str or list of str
+            Name(s) of the variable(s) to retrieve. Can be either:
+            - A single variable name (str): "Ta_K", "SM", "SWin", etc.
+            - A list of variable names (List[str]): ["Ta_K", "SM", "SWin"]
+            Each can be either:
             - A predefined variable name from GEOS5FP_VARIABLES (e.g., "Ta_K", "SM", "SWin")
             - A raw GEOS-5 FP variable name (e.g., "T2M", "SFMC", "SWGDN")
+            When multiple variables are requested with point geometry, each variable becomes a column.
         time_UTC : datetime or str, optional
             Single date/time in UTC for raster queries. Required if time_range not provided.
         time_range : tuple of (start, end), optional
@@ -1546,6 +1550,7 @@ class GEOS5FPConnection:
         dataset : str, optional
             GEOS-5 FP product/dataset name (e.g., "tavg1_2d_slv_Nx", "inst3_2d_asm_Nx").
             If not provided, will be looked up from GEOS5FP_VARIABLES.
+            Required when using raw variable names or when querying multiple variables from same dataset.
         geometry : RasterGeometry or Point or MultiPoint, optional
             Target geometry. Can be:
             - RasterGeometry for spatial raster queries
@@ -1565,7 +1570,7 @@ class GEOS5FPConnection:
         Returns
         -------
         Raster or pd.DataFrame
-            - Raster if querying spatial data at a single time
+            - Raster if querying spatial data at a single time (single variable only)
             - DataFrame if querying point location(s), with time index and variable column(s)
         
         Examples
@@ -1583,7 +1588,16 @@ class GEOS5FPConnection:
         ...     lon=-118.25
         ... )
         
-        # Example 2: Raster query at single time
+        # Example 2: Multiple variables in point query
+        >>> df = conn.variable(
+        ...     ["T2M", "PS", "QV2M"],
+        ...     time_range=(start_time, end_time),
+        ...     dataset="tavg1_2d_slv_Nx",
+        ...     lat=34.05,
+        ...     lon=-118.25
+        ... )
+        
+        # Example 3: Raster query at single time
         >>> from rasters import RasterGeometry
         >>> geometry = RasterGeometry.open("target_area.tif")
         >>> raster = conn.variable(
@@ -1593,7 +1607,7 @@ class GEOS5FPConnection:
         ...     geometry=geometry
         ... )
         
-        # Example 3: Use predefined variable name
+        # Example 4: Use predefined variable name
         >>> df = conn.variable(
         ...     "Ta_K",
         ...     time_range=(start_time, end_time),
@@ -1601,9 +1615,9 @@ class GEOS5FPConnection:
         ...     lon=-118.25
         ... )
         
-        # Example 4: Query wind speed components
+        # Example 5: Query multiple predefined variables
         >>> df = conn.variable(
-        ...     "U2M",
+        ...     ["Ta_K", "SM", "SWin"],
         ...     time_range=(start_time, end_time),
         ...     lat=40.7,
         ...     lon=-74.0
@@ -1616,7 +1630,17 @@ class GEOS5FPConnection:
         - When both time_UTC and time_range are provided, time_range takes precedence
           for point queries
         - Point queries require xarray and netCDF4 to be installed
+        - Multiple variables can only be queried simultaneously for point geometries
+        - Raster queries only support single variables
         """
+        # Normalize variable_name to list
+        if isinstance(variable_name, str):
+            variable_names = [variable_name]
+            single_variable = True
+        else:
+            variable_names = variable_name
+            single_variable = False
+        
         # Validate inputs
         if time_UTC is None and time_range is None:
             raise ValueError("Either time_UTC or time_range must be provided")
@@ -1633,6 +1657,10 @@ class GEOS5FPConnection:
             (self._is_point_geometry(geometry) or (lat is not None and lon is not None))
         )
         
+        # Check if multiple variables requested for non-point query
+        if not single_variable and not self._is_point_geometry(geometry):
+            raise ValueError("Multiple variables can only be queried for point geometries")
+        
         # Handle point time-series queries with OPeNDAP
         if is_point_time_series:
             if not HAS_OPENDAP_SUPPORT:
@@ -1641,118 +1669,255 @@ class GEOS5FPConnection:
                     "Install with: conda install -c conda-forge xarray netcdf4"
                 )
             
-            # Determine dataset
-            if dataset is None:
-                if variable_name in GEOS5FP_VARIABLES:
-                    _, dataset, raw_variable = self._get_variable_info(variable_name)
-                else:
-                    raise ValueError(
-                        f"Dataset must be specified when using raw variable name '{variable_name}'. "
-                        f"Known variables: {list(GEOS5FP_VARIABLES.keys())}"
-                    )
-            else:
-                # Use provided dataset, determine variable
-                if variable_name in GEOS5FP_VARIABLES:
-                    _, _, raw_variable = self._get_variable_info(variable_name)
-                else:
-                    raw_variable = variable_name
-            
-            # Convert variable name to lowercase for OPeNDAP
-            variable_opendap = raw_variable.lower()
-            
             # Extract point coordinates
             if geometry is not None:
                 points = self._extract_points(geometry)
             else:
                 points = [(lat, lon)]
             
-            logger.info(
-                f"retrieving {variable_name} time-series "
-                f"from GEOS-5 FP {dataset} {raw_variable} "
-                f"for time range {time_range[0]} to {time_range[1]}"
-            )
+            # Process each variable
+            all_variable_dfs = []
             
-            # Query each point
-            dfs = []
-            for pt_lat, pt_lon in points:
-                try:
-                    result = query_geos5fp_point(
-                        dataset=dataset,
-                        variable=variable_opendap,
-                        lat=pt_lat,
-                        lon=pt_lon,
-                        time_range=time_range,
-                        dropna=dropna
+            for var_name in variable_names:
+                # Determine dataset for this variable
+                var_dataset = dataset
+                if var_dataset is None:
+                    if var_name in GEOS5FP_VARIABLES:
+                        _, var_dataset, raw_variable = self._get_variable_info(var_name)
+                    else:
+                        raise ValueError(
+                            f"Dataset must be specified when using raw variable name '{var_name}'. "
+                            f"Known variables: {list(GEOS5FP_VARIABLES.keys())}"
+                        )
+                else:
+                    # Use provided dataset, determine variable
+                    if var_name in GEOS5FP_VARIABLES:
+                        _, _, raw_variable = self._get_variable_info(var_name)
+                    else:
+                        raw_variable = var_name
+                
+                # Convert variable name to lowercase for OPeNDAP
+                variable_opendap = raw_variable.lower()
+                
+                logger.info(
+                    f"retrieving {var_name} time-series "
+                    f"from GEOS-5 FP {var_dataset} {raw_variable} "
+                    f"for time range {time_range[0]} to {time_range[1]}"
+                )
+                
+                # Query each point for this variable
+                dfs = []
+                for pt_lat, pt_lon in points:
+                    try:
+                        result = query_geos5fp_point(
+                            dataset=var_dataset,
+                            variable=variable_opendap,
+                            lat=pt_lat,
+                            lon=pt_lon,
+                            time_range=time_range,
+                            dropna=dropna
+                        )
+                        
+                        if len(result.df) == 0:
+                            logger.warning(f"No data found for point ({pt_lat}, {pt_lon})")
+                            continue
+                        
+                        df_point = result.df.copy()
+                        df_point['lat'] = pt_lat
+                        df_point['lon'] = pt_lon
+                        df_point['lat_used'] = result.lat_used
+                        df_point['lon_used'] = result.lon_used
+                        
+                        # Rename from OPeNDAP variable name to requested variable name
+                        if variable_opendap in df_point.columns:
+                            df_point = df_point.rename(columns={variable_opendap: var_name})
+                        
+                        dfs.append(df_point)
+                    except Exception as e:
+                        logger.warning(f"Failed to query point ({pt_lat}, {pt_lon}) for {var_name}: {e}")
+                
+                if not dfs:
+                    logger.warning(f"No successful point queries for variable {var_name}")
+                    continue
+                
+                var_df = pd.concat(dfs, ignore_index=False)
+                all_variable_dfs.append(var_df)
+            
+            if not all_variable_dfs:
+                raise ValueError("No successful point queries for any variable")
+            
+            # Merge all variable DataFrames
+            if len(all_variable_dfs) == 1:
+                result_df = all_variable_dfs[0]
+            else:
+                # Merge on index and location columns
+                result_df = all_variable_dfs[0]
+                for var_df in all_variable_dfs[1:]:
+                    # Get the variable column name (exclude lat, lon, lat_used, lon_used)
+                    var_cols = [col for col in var_df.columns 
+                               if col not in ['lat', 'lon', 'lat_used', 'lon_used']]
+                    
+                    # Merge on index and location
+                    result_df = result_df.merge(
+                        var_df[var_cols],
+                        left_index=True,
+                        right_index=True,
+                        how='outer'
                     )
-                    
-                    if len(result.df) == 0:
-                        logger.warning(f"No data found for point ({pt_lat}, {pt_lon})")
-                        continue
-                    
-                    df_point = result.df.copy()
-                    df_point['lat'] = pt_lat
-                    df_point['lon'] = pt_lon
-                    df_point['lat_used'] = result.lat_used
-                    df_point['lon_used'] = result.lon_used
-                    
-                    # Rename from OPeNDAP variable name to requested variable name
-                    if variable_opendap in df_point.columns:
-                        df_point = df_point.rename(columns={variable_opendap: variable_name})
-                    
-                    dfs.append(df_point)
-                except Exception as e:
-                    logger.warning(f"Failed to query point ({pt_lat}, {pt_lon}): {e}")
             
-            if not dfs:
-                raise ValueError("No successful point queries")
-            
-            result_df = pd.concat(dfs, ignore_index=False)
             return result_df
         
         # Handle single-time queries (raster or single-point)
         else:
             if time_UTC is None:
-                raise ValueError("time_UTC is required for single-time raster queries")
+                raise ValueError("time_UTC is required for single-time queries")
             
-            # Check if variable is in our predefined list
-            if variable_name in GEOS5FP_VARIABLES:
-                # Use the standard retrieval method
-                return self._get_simple_variable(
-                    variable_name,
-                    time_UTC,
-                    geometry=geometry,
-                    resampling=resampling,
-                    **kwargs
-                )
+            # For single variable, use original logic
+            if single_variable:
+                var_name = variable_names[0]
+                
+                # Check if variable is in our predefined list
+                if var_name in GEOS5FP_VARIABLES:
+                    # Use the standard retrieval method
+                    return self._get_simple_variable(
+                        var_name,
+                        time_UTC,
+                        geometry=geometry,
+                        resampling=resampling,
+                        **kwargs
+                    )
+                
+                # Raw variable name provided
+                else:
+                    if dataset is None:
+                        raise ValueError(
+                            f"Dataset must be specified when using raw variable name '{var_name}'. "
+                            f"Known variables: {list(GEOS5FP_VARIABLES.keys())}"
+                        )
+                    
+                    if isinstance(time_UTC, str):
+                        time_UTC = parser.parse(time_UTC)
+                    
+                    # Check if this is a point query
+                    if self._is_point_geometry(geometry):
+                        if not HAS_OPENDAP_SUPPORT:
+                            raise ImportError(
+                                "Point query support requires xarray and netCDF4. "
+                                "Install with: conda install -c conda-forge xarray netcdf4"
+                            )
+                        
+                        logger.info(
+                            f"retrieving {var_name} "
+                            f"from GEOS-5 FP {dataset} at point location(s)"
+                        )
+                        
+                        points = self._extract_points(geometry)
+                        dfs = []
+                        variable_opendap = var_name.lower()
+                        
+                        for pt_lat, pt_lon in points:
+                            try:
+                                # Query small time window around target time
+                                time_window_start = time_UTC - timedelta(hours=2)
+                                time_window_end = time_UTC + timedelta(hours=2)
+                                
+                                result = query_geos5fp_point(
+                                    dataset=dataset,
+                                    variable=variable_opendap,
+                                    lat=pt_lat,
+                                    lon=pt_lon,
+                                    time_range=(time_window_start, time_window_end),
+                                    dropna=dropna
+                                )
+                                
+                                if len(result.df) == 0:
+                                    logger.warning(f"No data found for point ({pt_lat}, {pt_lon})")
+                                    continue
+                                
+                                # Find closest time
+                                time_diffs = abs(result.df.index - time_UTC)
+                                closest_idx = time_diffs.argmin()
+                                df_point = result.df.iloc[[closest_idx]].copy()
+                                
+                                df_point['lat'] = pt_lat
+                                df_point['lon'] = pt_lon
+                                df_point['lat_used'] = result.lat_used
+                                df_point['lon_used'] = result.lon_used
+                                
+                                if variable_opendap in df_point.columns:
+                                    df_point = df_point.rename(columns={variable_opendap: var_name})
+                                
+                                dfs.append(df_point)
+                            except Exception as e:
+                                logger.warning(f"Failed to query point ({pt_lat}, {pt_lon}): {e}")
+                        
+                        if not dfs:
+                            raise ValueError("No successful point queries")
+                        
+                        result_df = pd.concat(dfs, ignore_index=False)
+                        return result_df
+                    
+                    # Raster query
+                    else:
+                        logger.info(
+                            f"retrieving {var_name} "
+                            f"from GEOS-5 FP {dataset} " +
+                            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+                        )
+                        
+                        return self.interpolate(
+                            time_UTC=time_UTC,
+                            product=dataset,
+                            variable=var_name,
+                            geometry=geometry,
+                            resampling=resampling,
+                            **kwargs
+                        )
             
-            # Raw variable name provided
+            # Multiple variables at single time (point query only)
             else:
-                if dataset is None:
-                    raise ValueError(
-                        f"Dataset must be specified when using raw variable name '{variable_name}'. "
-                        f"Known variables: {list(GEOS5FP_VARIABLES.keys())}"
+                if not self._is_point_geometry(geometry):
+                    raise ValueError("Multiple variables can only be queried for point geometries")
+                
+                if not HAS_OPENDAP_SUPPORT:
+                    raise ImportError(
+                        "Point query support requires xarray and netCDF4. "
+                        "Install with: conda install -c conda-forge xarray netcdf4"
                     )
                 
                 if isinstance(time_UTC, str):
                     time_UTC = parser.parse(time_UTC)
                 
-                # Check if this is a point query
-                if self._is_point_geometry(geometry):
-                    if not HAS_OPENDAP_SUPPORT:
-                        raise ImportError(
-                            "Point query support requires xarray and netCDF4. "
-                            "Install with: conda install -c conda-forge xarray netcdf4"
-                        )
+                points = self._extract_points(geometry)
+                all_variable_dfs = []
+                
+                # Process each variable
+                for var_name in variable_names:
+                    # Determine dataset for this variable
+                    var_dataset = dataset
+                    if var_dataset is None:
+                        if var_name in GEOS5FP_VARIABLES:
+                            _, var_dataset, raw_variable = self._get_variable_info(var_name)
+                        else:
+                            raise ValueError(
+                                f"Dataset must be specified when using raw variable name '{var_name}'. "
+                                f"Known variables: {list(GEOS5FP_VARIABLES.keys())}"
+                            )
+                    else:
+                        # Use provided dataset, determine variable
+                        if var_name in GEOS5FP_VARIABLES:
+                            _, _, raw_variable = self._get_variable_info(var_name)
+                        else:
+                            raw_variable = var_name
+                    
+                    variable_opendap = raw_variable.lower()
                     
                     logger.info(
-                        f"retrieving {variable_name} "
-                        f"from GEOS-5 FP {dataset} at point location(s)"
+                        f"retrieving {var_name} "
+                        f"from GEOS-5 FP {var_dataset} at point location(s)"
                     )
                     
-                    points = self._extract_points(geometry)
                     dfs = []
-                    variable_opendap = variable_name.lower()
-                    
                     for pt_lat, pt_lon in points:
                         try:
                             # Query small time window around target time
@@ -1760,7 +1925,7 @@ class GEOS5FPConnection:
                             time_window_end = time_UTC + timedelta(hours=2)
                             
                             result = query_geos5fp_point(
-                                dataset=dataset,
+                                dataset=var_dataset,
                                 variable=variable_opendap,
                                 lat=pt_lat,
                                 lon=pt_lon,
@@ -1783,31 +1948,39 @@ class GEOS5FPConnection:
                             df_point['lon_used'] = result.lon_used
                             
                             if variable_opendap in df_point.columns:
-                                df_point = df_point.rename(columns={variable_opendap: variable_name})
+                                df_point = df_point.rename(columns={variable_opendap: var_name})
                             
                             dfs.append(df_point)
                         except Exception as e:
-                            logger.warning(f"Failed to query point ({pt_lat}, {pt_lon}): {e}")
+                            logger.warning(f"Failed to query point ({pt_lat}, {pt_lon}) for {var_name}: {e}")
                     
                     if not dfs:
-                        raise ValueError("No successful point queries")
+                        logger.warning(f"No successful point queries for variable {var_name}")
+                        continue
                     
-                    result_df = pd.concat(dfs, ignore_index=False)
-                    return result_df
+                    var_df = pd.concat(dfs, ignore_index=False)
+                    all_variable_dfs.append(var_df)
                 
-                # Raster query
+                if not all_variable_dfs:
+                    raise ValueError("No successful point queries for any variable")
+                
+                # Merge all variable DataFrames
+                if len(all_variable_dfs) == 1:
+                    result_df = all_variable_dfs[0]
                 else:
-                    logger.info(
-                        f"retrieving {variable_name} "
-                        f"from GEOS-5 FP {dataset} " +
-                        "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
-                    )
-                    
-                    return self.interpolate(
-                        time_UTC=time_UTC,
-                        product=dataset,
-                        variable=variable_name,
-                        geometry=geometry,
-                        resampling=resampling,
-                        **kwargs
-                    )
+                    # Merge on index and location columns
+                    result_df = all_variable_dfs[0]
+                    for var_df in all_variable_dfs[1:]:
+                        # Get the variable column name (exclude lat, lon, lat_used, lon_used)
+                        var_cols = [col for col in var_df.columns 
+                                   if col not in ['lat', 'lon', 'lat_used', 'lon_used']]
+                        
+                        # Merge on index and location
+                        result_df = result_df.merge(
+                            var_df[var_cols],
+                            left_index=True,
+                            right_index=True,
+                            how='outer'
+                        )
+                
+                return result_df
