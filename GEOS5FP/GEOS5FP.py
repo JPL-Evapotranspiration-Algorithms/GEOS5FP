@@ -1,7 +1,8 @@
 from .constants import *
 from .exceptions import *
-from .GEOS5FP_granule import GEOS5FPGranule
-from .GEOS5FP_connection import GEOS5FPConnection
+from .GEOS5FP_granule import *
+from .GEOS5FP_connection import *
+from .GEOS5FP_point import *
 
 __author__ = 'Gregory H. Halverson'
 
