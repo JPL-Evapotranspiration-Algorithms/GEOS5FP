@@ -12,6 +12,7 @@ import posixpath
 import colored_logging as cl
 import numpy as np
 import pandas as pd
+import geopandas as gpd
 import rasterio
 import rasters as rt
 import requests
@@ -1723,14 +1724,13 @@ class GEOS5FPConnection:
                             continue
                         
                         df_point = result.df.copy()
-                        df_point['lat'] = pt_lat
-                        df_point['lon'] = pt_lon
-                        df_point['lat_used'] = result.lat_used
-                        df_point['lon_used'] = result.lon_used
                         
                         # Rename from OPeNDAP variable name to requested variable name
                         if variable_opendap in df_point.columns:
                             df_point = df_point.rename(columns={variable_opendap: var_name})
+                        
+                        # Add geometry column at the end
+                        df_point['geometry'] = Point(pt_lon, pt_lat)
                         
                         dfs.append(df_point)
                     except Exception as e:
@@ -1750,22 +1750,30 @@ class GEOS5FPConnection:
             if len(all_variable_dfs) == 1:
                 result_df = all_variable_dfs[0]
             else:
-                # Merge on index and location columns
-                result_df = all_variable_dfs[0]
+                # Save geometry from first dataframe
+                geometry_col = all_variable_dfs[0]['geometry'].copy()
+                
+                # Merge on index (time), excluding geometry from all but first
+                result_df = all_variable_dfs[0].drop(columns=['geometry'])
                 for var_df in all_variable_dfs[1:]:
-                    # Get the variable column name (exclude lat, lon, lat_used, lon_used)
-                    var_cols = [col for col in var_df.columns 
-                               if col not in ['lat', 'lon', 'lat_used', 'lon_used']]
+                    # Get the variable column name (exclude geometry)
+                    var_cols = [col for col in var_df.columns if col != 'geometry']
                     
-                    # Merge on index and location
+                    # Merge on index
                     result_df = result_df.merge(
                         var_df[var_cols],
                         left_index=True,
                         right_index=True,
                         how='outer'
                     )
+                
+                # Add geometry column at the end
+                result_df['geometry'] = geometry_col
             
-            return result_df
+            # Convert to GeoDataFrame
+            result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
+            
+            return result_gdf
         
         # Handle single-time queries (raster or single-point)
         else:
@@ -1839,13 +1847,11 @@ class GEOS5FPConnection:
                                 closest_idx = time_diffs.argmin()
                                 df_point = result.df.iloc[[closest_idx]].copy()
                                 
-                                df_point['lat'] = pt_lat
-                                df_point['lon'] = pt_lon
-                                df_point['lat_used'] = result.lat_used
-                                df_point['lon_used'] = result.lon_used
-                                
                                 if variable_opendap in df_point.columns:
                                     df_point = df_point.rename(columns={variable_opendap: var_name})
+                                
+                                # Add geometry column at the end
+                                df_point['geometry'] = Point(pt_lon, pt_lat)
                                 
                                 dfs.append(df_point)
                             except Exception as e:
@@ -1855,7 +1861,8 @@ class GEOS5FPConnection:
                             raise ValueError("No successful point queries")
                         
                         result_df = pd.concat(dfs, ignore_index=False)
-                        return result_df
+                        result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
+                        return result_gdf
                     
                     # Raster query
                     else:
@@ -1942,13 +1949,11 @@ class GEOS5FPConnection:
                             closest_idx = time_diffs.argmin()
                             df_point = result.df.iloc[[closest_idx]].copy()
                             
-                            df_point['lat'] = pt_lat
-                            df_point['lon'] = pt_lon
-                            df_point['lat_used'] = result.lat_used
-                            df_point['lon_used'] = result.lon_used
-                            
                             if variable_opendap in df_point.columns:
                                 df_point = df_point.rename(columns={variable_opendap: var_name})
+                            
+                            # Add geometry column at the end
+                            df_point['geometry'] = Point(pt_lon, pt_lat)
                             
                             dfs.append(df_point)
                         except Exception as e:
@@ -1968,19 +1973,27 @@ class GEOS5FPConnection:
                 if len(all_variable_dfs) == 1:
                     result_df = all_variable_dfs[0]
                 else:
-                    # Merge on index and location columns
-                    result_df = all_variable_dfs[0]
+                    # Save geometry from first dataframe
+                    geometry_col = all_variable_dfs[0]['geometry'].copy()
+                    
+                    # Merge on index (time), excluding geometry from all but first
+                    result_df = all_variable_dfs[0].drop(columns=['geometry'])
                     for var_df in all_variable_dfs[1:]:
-                        # Get the variable column name (exclude lat, lon, lat_used, lon_used)
-                        var_cols = [col for col in var_df.columns 
-                                   if col not in ['lat', 'lon', 'lat_used', 'lon_used']]
+                        # Get the variable column name (exclude geometry)
+                        var_cols = [col for col in var_df.columns if col != 'geometry']
                         
-                        # Merge on index and location
+                        # Merge on index
                         result_df = result_df.merge(
                             var_df[var_cols],
                             left_index=True,
                             right_index=True,
                             how='outer'
                         )
+                    
+                    # Add geometry column at the end
+                    result_df['geometry'] = geometry_col
                 
-                return result_df
+                # Convert to GeoDataFrame
+                result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
+                
+                return result_gdf

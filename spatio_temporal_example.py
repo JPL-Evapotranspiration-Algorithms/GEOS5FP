@@ -39,4 +39,6 @@ df = conn.variable(
 )
 
 print("\nResults:")
+print(f"Type: {type(df)}")
+print(f"CRS: {df.crs}")
 print(df)
