@@ -47,7 +47,7 @@ dev = [
 ]
 
 [tool.setuptools.package-data]
-geos5fp = ["*.txt"]
+GEOS5FP = ["*.txt", "*.csv"]
 
 [project.urls]
 "Homepage" = "https://github.com/JPL-Evapotranspiration-Algorithms/geos5fp"

@@ -1,17 +1,29 @@
 # GEOS5FP Refactoring Summary
 
 ## Overview
-Refactored the GEOS5FP package to centralize NAME/PRODUCT/VARIABLE constants in a single location, making the code more maintainable and reducing duplication.
+Refactored the GEOS5FP package to centralize NAME/PRODUCT/VARIABLE constants in a CSV file, making the code more maintainable and reducing duplication.
 
 ## Changes Made
 
-### 1. Constants File (`GEOS5FP/constants.py`)
-Added a new `GEOS5FP_VARIABLES` dictionary that maps variable names to their metadata:
-- **Structure**: `{variable_name: (description, product, variable)}`
-- **Contains**: All 32 variable mappings including aliases
+### 1. Variables CSV File (`GEOS5FP/variables.csv`) - **NEW**
+Created a CSV file containing all variable mappings:
+- **Format**: CSV with columns: `variable_name`, `description`, `product`, `variable`
+- **Contains**: All 31 variable mappings including aliases
 - **Aliases supported**: SM/SFMC, Ts/Ts_K, Ta/Ta_K, Tmin/Tmin_K, vapor_kgsqm/vapor_gccm, ozone_dobson/ozone_cm
+- **Benefit**: Easy to edit in spreadsheet applications or text editors
 
-### 2. Connection File (`GEOS5FP/GEOS5FP_connection.py`)
+### 2. Constants File (`GEOS5FP/constants.py`)
+Updated to load variable mappings from CSV file:
+- Added `_load_variables()` function that reads `variables.csv`
+- `GEOS5FP_VARIABLES` dictionary is now populated from CSV at import time
+- **Structure maintained**: `{variable_name: (description, product, variable)}`
+
+### 3. Package Configuration (`pyproject.toml`)
+Updated to include CSV file in package distribution:
+- Added `*.csv` to `[tool.setuptools.package-data]`
+- Ensures `variables.csv` is included when package is installed
+
+### 4. Connection File (`GEOS5FP/GEOS5FP_connection.py`)
 #### Added Helper Method
 - `_get_variable_info(variable_name)`: Looks up variable metadata from `GEOS5FP_VARIABLES`
   - Returns: tuple of (description, product, variable)
@@ -19,34 +31,15 @@ Added a new `GEOS5FP_VARIABLES` dictionary that maps variable names to their met
 
 #### Refactored Methods (25 methods updated)
 All variable retrieval methods now use `_get_variable_info()` instead of hardcoded constants:
-- SFMC
-- LAI
-- LHLAND
-- EFLUX
-- PARDR
-- PARDF
-- AOT
-- COT
-- Ts_K
-- Ta_K
-- Tmin_K
-- PS
-- Q
-- vapor_kgsqm
-- ozone_dobson
-- U2M
-- V2M
-- CO2SC
-- SWin
-- SWTDN
-- ALBVISDR
-- ALBVISDF
-- ALBNIRDF
-- ALBNIRDR
-- ALBEDO
+- SFMC, LAI, LHLAND, EFLUX, PARDR, PARDF, AOT, COT
+- Ts_K, Ta_K, Tmin_K, PS, Q
+- vapor_kgsqm, ozone_dobson, U2M, V2M, CO2SC
+- SWin, SWTDN, ALBVISDR, ALBVISDF, ALBNIRDF, ALBNIRDR, ALBEDO
 
-### 3. Tests (`tests/test_variable_constants.py`)
-Created comprehensive test suite to verify:
+### 5. Tests
+Created two comprehensive test suites:
+
+#### `tests/test_variable_constants.py` (6 tests)
 - Constants dictionary exists and is properly structured
 - All expected variables are present
 - Variable info tuples have correct format
@@ -54,20 +47,30 @@ Created comprehensive test suite to verify:
 - Invalid variables raise appropriate errors
 - Aliases point to the same underlying data
 
+#### `tests/test_csv_loading.py` (5 tests) - **NEW**
+- CSV file exists in package
+- CSV has correct format and required columns
+- Loaded constants match CSV content
+- CSV contains all expected variables
+- `_load_variables()` function works correctly
+
 ## Benefits
 
-1. **Single Source of Truth**: All variable metadata is now defined in one place
-2. **Easier Maintenance**: Adding new variables or modifying existing ones requires changes in only one location
-3. **Reduced Duplication**: Eliminates ~75 lines of repetitive constant definitions
-4. **Better Testability**: Variable mappings can be tested independently
-5. **Type Safety**: Helper method provides consistent interface for variable lookup
-6. **Documentation**: Constants file serves as comprehensive reference for all available variables
+1. **Human-Editable Format**: CSV can be edited in Excel, Google Sheets, or any text editor
+2. **Single Source of Truth**: All variable metadata is now defined in one CSV file
+3. **Easier Maintenance**: Adding new variables requires only adding a CSV row
+4. **No Code Changes**: Adding variables doesn't require modifying Python code
+5. **Version Control Friendly**: CSV diffs are easy to review
+6. **Reduced Code**: Eliminated ~75 lines of repetitive constant definitions
+7. **Better Testability**: Variable mappings and CSV loading can be tested independently
+8. **Type Safety**: Helper method provides consistent interface for variable lookup
+9. **Documentation**: CSV file serves as comprehensive reference for all available variables
 
 ## Backward Compatibility
 ✅ All existing functionality preserved
 ✅ All method signatures unchanged
 ✅ All aliases still work (SM, Ts_K, Ta_K, etc.)
-✅ All 22 tests pass
+✅ All 27 tests pass (16 original + 6 constants + 5 CSV loading)
 
 ## Variable Mappings Summary
 

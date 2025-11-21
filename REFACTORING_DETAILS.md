@@ -31,38 +31,41 @@ GEOS5FP_connection.py
 ## After Refactoring
 
 ```
-constants.py
-└── GEOS5FP_VARIABLES = {
-    "SFMC": ("top layer soil moisture", "tavg1_2d_lnd_Nx", "SFMC"),
-    "SM": ("top layer soil moisture", "tavg1_2d_lnd_Nx", "SFMC"),
-    "LAI": ("leaf area index", "tavg1_2d_lnd_Nx", "LAI"),
-    "Ta_K": ("Ta", "tavg1_2d_slv_Nx", "T2M"),
-    "Ta": ("Ta", "tavg1_2d_slv_Nx", "T2M"),
-    ... (31 total mappings including aliases)
-}
-
-GEOS5FP_connection.py
-├── _get_variable_info(variable_name)
-│   └── Returns GEOS5FP_VARIABLES[variable_name]
+GEOS5FP/
+├── variables.csv (NEW!)
+│   ├── variable_name,description,product,variable
+│   ├── SFMC,top layer soil moisture,tavg1_2d_lnd_Nx,SFMC
+│   ├── SM,top layer soil moisture,tavg1_2d_lnd_Nx,SFMC
+│   ├── LAI,leaf area index,tavg1_2d_lnd_Nx,LAI
+│   ├── Ta_K,Ta,tavg1_2d_slv_Nx,T2M
+│   └── ... (31 total rows including aliases)
 │
-├── SFMC()
-│   └── NAME, PRODUCT, VARIABLE = self._get_variable_info("SFMC")
+├── constants.py
+│   ├── _load_variables()  # Reads variables.csv
+│   └── GEOS5FP_VARIABLES = _load_variables()
 │
-├── LAI()
-│   └── NAME, PRODUCT, VARIABLE = self._get_variable_info("LAI")
-│
-├── Ta_K()
-│   └── NAME, PRODUCT, VARIABLE = self._get_variable_info("Ta_K")
-│
-└── ... (25 methods, all using centralized lookup)
+└── GEOS5FP_connection.py
+    ├── _get_variable_info(variable_name)
+    │   └── Returns GEOS5FP_VARIABLES[variable_name]
+    │
+    ├── SFMC()
+    │   └── NAME, PRODUCT, VARIABLE = self._get_variable_info("SFMC")
+    │
+    ├── LAI()
+    │   └── NAME, PRODUCT, VARIABLE = self._get_variable_info("LAI")
+    │
+    └── ... (25 methods, all using centralized lookup)
 ```
 
 **Benefits:**
-- ✅ Single source of truth in `constants.py`
+- ✅ Single source of truth in CSV file
+- ✅ Edit variables in Excel or text editor
+- ✅ No code changes needed to add variables
 - ✅ Easy to add/modify variables
 - ✅ Consistent across all methods
 - ✅ Better testability
 - ✅ Self-documenting
+- ✅ Version control friendly
 
 ## Code Comparison
 
@@ -128,18 +131,18 @@ def NEW_VAR(self, time_UTC, ...):
     # ... rest of method
 ```
 
-### After:
-```python
-# Step 1: Add to constants.py
-GEOS5FP_VARIABLES = {
-    ...
-    "NEW_VAR": ("new variable", "new_product", "NEW_VAR"),
-}
+### After (CSV approach):
+```csv
+# Step 1: Add row to variables.csv
+variable_name,description,product,variable
+NEW_VAR,new variable,new_product,NEW_VAR
+```
 
-# Step 2: Add method using lookup
+```python
+# Step 2: Add method using lookup (no constants needed!)
 def NEW_VAR(self, time_UTC, ...):
     NAME, PRODUCT, VARIABLE = self._get_variable_info("NEW_VAR")
     # ... rest of method
 ```
 
-Much cleaner and more maintainable! 🎉
+**Even easier!** Just edit the CSV file - no Python code changes needed! 🎉
