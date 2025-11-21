@@ -2,18 +2,15 @@
 Example: Time-series query of air temperature in Celsius for Los Angeles.
 
 This example demonstrates how to retrieve a week-long time-series of air 
-temperature in Celsius (Ta_C) for a specific location in Los Angeles.
+temperature in Celsius using a single OPeNDAP query with a time range.
 """
 
-from shapely.geometry import Point
 from datetime import datetime, timedelta
 import pandas as pd
 
 try:
-    from GEOS5FP import GEOS5FPConnection
-    
-    # Create connection
-    conn = GEOS5FPConnection()
+    # Import the direct OPeNDAP query function for efficient time-series retrieval
+    from GEOS5FP.GEOS5FP_point import query_geos5fp_point
     
     print("=" * 70)
     print("Time-Series Query: Air Temperature in Celsius")
@@ -21,67 +18,58 @@ try:
     print("Duration: 1 week")
     print("=" * 70)
     
-    # Create a point for Los Angeles (lon, lat format for shapely)
-    la_point = Point(-118.25, 34.05)
+    # Define coordinates for Los Angeles
+    lat = 34.05
+    lon = -118.25
     
     # Define time range for the past week
     # Using a date range that should have data available
     end_time = datetime(2024, 11, 15, 0, 0)
     start_time = end_time - timedelta(days=7)
     
-    # Collect temperature data for each day
-    temperature_data = []
-    
     print(f"\nQuerying data from {start_time} to {end_time}...")
+    print("Making a single OPeNDAP call with time-slice...")
     print("-" * 70)
     
-    # Query at 3-hour intervals (8 times per day) for a week
-    current_time = start_time
-    while current_time <= end_time:
-        try:
-            # Use Ta_K method to get temperature in Kelvin, then convert to Celsius
-            result = conn.Ta_K(time_UTC=current_time, geometry=la_point)
-            
-            # Extract the temperature value and convert to Celsius
-            if not result.empty:
-                temp_k = result['Ta_K'].iloc[0]
-                temp_c = temp_k - 273.15
-                temperature_data.append({
-                    'time': current_time,
-                    'temperature_C': temp_c,
-                    'lat': result['lat'].iloc[0],
-                    'lon': result['lon'].iloc[0]
-                })
-                print(f"✓ {current_time}: {temp_c:.2f}°C")
-            else:
-                print(f"✗ {current_time}: No data available")
-                
-        except Exception as e:
-            print(f"✗ {current_time}: Error - {e}")
-        
-        # Move to next 3-hour interval
-        current_time += timedelta(hours=3)
+    # Make a single OPeNDAP query for the entire time range
+    # This is MUCH faster than querying time-step by time-step
+    result = query_geos5fp_point(
+        dataset="tavg1_2d_slv_Nx",  # 1-hourly time-averaged, 2D, single-level
+        variable="t2m",              # 2-meter air temperature
+        lat=lat,
+        lon=lon,
+        time_range=(start_time, end_time),
+        dropna=True
+    )
     
-    # Create DataFrame from collected data
-    if temperature_data:
-        df = pd.DataFrame(temperature_data)
-        df.set_index('time', inplace=True)
-        
-        print("\n" + "=" * 70)
-        print("Complete Time-Series DataFrame:")
-        print("=" * 70)
-        print(df)
-        
-        print("\n" + "=" * 70)
-        print("Summary Statistics:")
-        print("=" * 70)
-        print(f"Mean Temperature: {df['temperature_C'].mean():.2f}°C")
-        print(f"Min Temperature:  {df['temperature_C'].min():.2f}°C")
-        print(f"Max Temperature:  {df['temperature_C'].max():.2f}°C")
-        print(f"Std Deviation:    {df['temperature_C'].std():.2f}°C")
-        print(f"Total Records:    {len(df)}")
-    else:
-        print("\n✗ No temperature data was successfully retrieved.")
+    # The result DataFrame is already time-indexed with all values
+    df = result.df.copy()
+    
+    # Convert from Kelvin to Celsius
+    df['temperature_C'] = df['t2m'] - 273.15
+    
+    # Add coordinate information
+    df['lat'] = result.lat_used
+    df['lon'] = result.lon_used
+    
+    # Remove the Kelvin column
+    df = df.drop(columns=['t2m'])
+    
+    print(f"✓ Retrieved {len(df)} temperature records")
+    
+    print("\n" + "=" * 70)
+    print("Complete Time-Series DataFrame:")
+    print("=" * 70)
+    print(df)
+    
+    print("\n" + "=" * 70)
+    print("Summary Statistics:")
+    print("=" * 70)
+    print(f"Mean Temperature: {df['temperature_C'].mean():.2f}°C")
+    print(f"Min Temperature:  {df['temperature_C'].min():.2f}°C")
+    print(f"Max Temperature:  {df['temperature_C'].max():.2f}°C")
+    print(f"Std Deviation:    {df['temperature_C'].std():.2f}°C")
+    print(f"Total Records:    {len(df)}")
     
     print("\n" + "=" * 70)
     print("Query completed!")
