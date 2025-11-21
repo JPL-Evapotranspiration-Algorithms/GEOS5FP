@@ -494,6 +494,67 @@ class GEOS5FPConnection:
 
         return before_granule, after_granule
 
+    def _get_simple_variable(
+            self,
+            variable_name: str,
+            time_UTC: Union[datetime, str],
+            geometry: RasterGeometry = None,
+            resampling: str = None,
+            interval: int = None,
+            expected_hours: List[float] = None,
+            min_value: Any = None,
+            max_value: Any = None,
+            exclude_values=None,
+            cmap=None,
+            clip_min: Any = None,
+            clip_max: Any = None) -> Raster:
+        """
+        Generic method to retrieve a simple variable that requires only interpolation.
+        
+        :param variable_name: Name of the variable (must exist in GEOS5FP_VARIABLES)
+        :param time_UTC: date/time in UTC
+        :param geometry: optional target geometry
+        :param resampling: optional sampling method for resampling to target geometry
+        :param interval: optional interval for product listing
+        :param expected_hours: optional expected hours for product listing
+        :param min_value: minimum value for interpolation
+        :param max_value: maximum value for interpolation
+        :param exclude_values: values to exclude in interpolation
+        :param cmap: colormap for the result
+        :param clip_min: minimum value for final clipping (applied after interpolation)
+        :param clip_max: maximum value for final clipping (applied after interpolation)
+        :return: raster of the requested variable
+        """
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
+            
+        NAME, PRODUCT, VARIABLE = self._get_variable_info(variable_name)
+        
+        logger.info(
+            f"retrieving {cl.name(NAME)} "
+            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
+            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        )
+        
+        result = self.interpolate(
+            time_UTC=time_UTC,
+            product=PRODUCT,
+            variable=VARIABLE,
+            geometry=geometry,
+            resampling=resampling,
+            interval=interval,
+            expected_hours=expected_hours,
+            min_value=min_value,
+            max_value=max_value,
+            exclude_values=exclude_values,
+            cmap=cmap
+        )
+        
+        if clip_min is not None or clip_max is not None:
+            result = rt.clip(result, clip_min, clip_max)
+            
+        return result
+
     def interpolate(
             self,
             time_UTC: Union[datetime, str],
@@ -582,20 +643,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("SFMC")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
-        )
-
-        return self.interpolate(
-            time_UTC=time_UTC,
-            product=PRODUCT,
-            variable=VARIABLE,
+        return self._get_simple_variable(
+            "SFMC",
+            time_UTC,
             geometry=geometry,
             resampling=resampling,
             interval=1,
@@ -615,19 +665,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of LAI
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("LAI")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
-        )
-
-        return self.interpolate(
-            time_UTC=time_UTC,
-            product=PRODUCT,
-            variable=VARIABLE,
+        return self._get_simple_variable(
+            "LAI",
+            time_UTC,
             geometry=geometry,
             resampling=resampling,
             interval=1,
@@ -659,19 +699,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("LHLAND")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
-        )
-
-        return self.interpolate(
-            time_UTC=time_UTC,
-            product=PRODUCT,
-            variable=VARIABLE,
+        return self._get_simple_variable(
+            "LHLAND",
+            time_UTC,
             geometry=geometry,
             resampling=resampling,
             interval=1,
@@ -686,19 +716,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("EFLUX")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
-        )
-
-        return self.interpolate(
-            time_UTC=time_UTC,
-            product=PRODUCT,
-            variable=VARIABLE,
+        return self._get_simple_variable(
+            "EFLUX",
+            time_UTC,
             geometry=geometry,
             resampling=resampling,
             interval=1
@@ -712,19 +732,13 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("PARDR")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "PARDR",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling,
+            clip_min=0
         )
-
-        image = self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
-        image = rt.clip(image, 0, None)
-
-        return image
 
     def PARDF(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
@@ -734,19 +748,13 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("PARDF")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "PARDF",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling,
+            clip_min=0
         )
-
-        image = self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
-        image = rt.clip(image, 0, None)
-
-        return image
 
     def AOT(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
@@ -756,22 +764,12 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of AOT
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("AOT")
         # 1:30, 4:30, 7:30, 10:30, 13:30, 16:30, 19:30, 22:30 UTC
         EXPECTED_HOURS = [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
-
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
-        )
-
-        return self.interpolate(
-            time_UTC=time_UTC,
-            product=PRODUCT,
-            variable=VARIABLE,
+        
+        return self._get_simple_variable(
+            "AOT",
+            time_UTC,
             geometry=geometry,
             resampling=resampling,
             expected_hours=EXPECTED_HOURS
@@ -785,16 +783,12 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of COT
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("COT")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "COT",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling
         )
-
-        return self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
 
     def Ts_K(
             self,
@@ -808,16 +802,12 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of Ta
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("Ts_K")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "Ts_K",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling
         )
-
-        return self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
 
     def Ta_K(
             self,
@@ -910,16 +900,12 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of Ta
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("Tmin_K")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "Tmin_K",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling
         )
-
-        return self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
 
     def SVP_Pa(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         Ta_C = self.Ta_C(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
@@ -941,16 +927,12 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of surface pressure
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("PS")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "PS",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling
         )
-
-        return self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
 
     def Q(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
@@ -960,16 +942,12 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of Q
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("Q")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "Q",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling
         )
-
-        return self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
 
     def Ea_Pa(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         RH = self.RH(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
@@ -1171,19 +1149,13 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("vapor_kgsqm")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "vapor_kgsqm",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling,
+            clip_min=0
         )
-
-        vapor = self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
-        vapor = np.clip(vapor, 0, None)
-
-        return vapor
 
     def vapor_gccm(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
@@ -1203,19 +1175,13 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("ozone_dobson")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "ozone_dobson",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling,
+            clip_min=0
         )
-
-        ozone_dobson = self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
-        ozone_dobson = np.clip(ozone_dobson, 0, None)
-
-        return ozone_dobson
 
     def ozone_cm(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
@@ -1235,18 +1201,12 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("U2M")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "U2M",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling
         )
-
-        U2M = self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
-
-        return U2M
 
     def V2M(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
@@ -1256,18 +1216,12 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("V2M")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "V2M",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling
         )
-
-        V2M = self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
-
-        return V2M
 
     def CO2SC(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
@@ -1277,28 +1231,16 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("CO2SC")
         # 1:30, 4:30, 7:30, 10:30, 13:30, 16:30, 19:30, 22:30 UTC
         EXPECTED_HOURS = [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
-
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
-        )
-
-        CO2SC = self.interpolate(
-            time_UTC=time_UTC,
-            product=PRODUCT,
-            variable=VARIABLE,
+        
+        return self._get_simple_variable(
+            "CO2SC",
+            time_UTC,
             geometry=geometry,
             resampling=resampling,
             expected_hours=EXPECTED_HOURS
         )
-
-        return CO2SC
 
     def wind_speed(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
@@ -1324,19 +1266,13 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of SWin
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("SWin")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "SWin",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling,
+            clip_min=0
         )
-
-        SWin = self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
-        SWin = np.clip(SWin, 0, None)
-
-        return SWin
 
     def SWTDN(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
@@ -1346,19 +1282,13 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of SWin
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("SWTDN")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "SWTDN",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling,
+            clip_min=0
         )
-
-        SWin = self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
-        SWin = np.clip(SWin, 0, None)
-
-        return SWin
 
     def ALBVISDR(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
@@ -1368,19 +1298,14 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("ALBVISDR")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "ALBVISDR",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling,
+            clip_min=0,
+            clip_max=1
         )
-
-        image = self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
-        image = np.clip(image, 0, 1)
-
-        return image
 
     def ALBVISDF(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
@@ -1390,19 +1315,14 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("ALBVISDF")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "ALBVISDF",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling,
+            clip_min=0,
+            clip_max=1
         )
-
-        image = self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
-        image = np.clip(image, 0, 1)
-
-        return image
 
     def ALBNIRDF(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
@@ -1412,19 +1332,14 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("ALBNIRDF")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "ALBNIRDF",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling,
+            clip_min=0,
+            clip_max=1
         )
-
-        image = self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
-        image = np.clip(image, 0, 1)
-
-        return image
 
     def ALBNIRDR(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
@@ -1434,19 +1349,14 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("ALBNIRDR")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "ALBNIRDR",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling,
+            clip_min=0,
+            clip_max=1
         )
-
-        image = self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
-        image = np.clip(image, 0, 1)
-
-        return image
 
     def ALBEDO(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
@@ -1456,16 +1366,11 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo
         """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("ALBEDO")
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        return self._get_simple_variable(
+            "ALBEDO",
+            time_UTC,
+            geometry=geometry,
+            resampling=resampling,
+            clip_min=0,
+            clip_max=1
         )
-
-        image = self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling=resampling)
-        image = np.clip(image, 0, 1)
-
-        return image
