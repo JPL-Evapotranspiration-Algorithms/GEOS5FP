@@ -70,6 +70,19 @@ class GEOS5FPConnection:
 
         return display_string
 
+    def _get_variable_info(self, variable_name: str) -> Tuple[str, str, str]:
+        """
+        Look up variable metadata from constants.
+        
+        :param variable_name: The name of the variable to look up
+        :return: Tuple of (description, product, variable)
+        :raises KeyError: If variable_name is not found in GEOS5FP_VARIABLES
+        """
+        if variable_name not in GEOS5FP_VARIABLES:
+            raise KeyError(f"Variable '{variable_name}' not found in GEOS5FP_VARIABLES")
+        
+        return GEOS5FP_VARIABLES[variable_name]
+
     def _check_remote(self):
         logger.info(f"checking URL: {cl.URL(self.remote)}")
         response = requests.head(self.remote)
@@ -572,9 +585,7 @@ class GEOS5FPConnection:
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
 
-        NAME = "top layer soil moisture"
-        PRODUCT = "tavg1_2d_lnd_Nx"
-        VARIABLE = "SFMC"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("SFMC")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -606,9 +617,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "leaf area index"
-        PRODUCT = "tavg1_2d_lnd_Nx"
-        VARIABLE = "LAI"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("LAI")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -652,9 +661,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "latent heat flux land"
-        PRODUCT = "tavg1_2d_lnd_Nx"
-        VARIABLE = "LHLAND"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("LHLAND")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -681,9 +688,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "total latent energy flux"
-        PRODUCT = "tavg1_2d_flx_Nx"
-        VARIABLE = "EFLUX"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("EFLUX")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -709,9 +714,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "PARDR"
-        PRODUCT = "tavg1_2d_lnd_Nx"
-        VARIABLE = "PARDR"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("PARDR")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -733,9 +736,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "PARDF"
-        PRODUCT = "tavg1_2d_lnd_Nx"
-        VARIABLE = "PARDF"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("PARDF")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -757,9 +758,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "AOT"
-        PRODUCT = "tavg3_2d_aer_Nx"
-        VARIABLE = "TOTEXTTAU"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("AOT")
         # 1:30, 4:30, 7:30, 10:30, 13:30, 16:30, 19:30, 22:30 UTC
         EXPECTED_HOURS = [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
 
@@ -788,9 +787,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "COT"
-        PRODUCT = "tavg1_2d_rad_Nx"
-        VARIABLE = "TAUTOT"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("COT")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -813,9 +810,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "Ts"
-        PRODUCT = "tavg1_2d_slv_Nx"
-        VARIABLE = "TS"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("Ts_K")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -847,9 +842,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "Ta"
-        PRODUCT = "tavg1_2d_slv_Nx"
-        VARIABLE = "T2M"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("Ta_K")
 
         logger.info(
             f"retrieving {cl.name(NAME)} "
@@ -919,9 +912,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "Tmin"
-        PRODUCT = "inst3_2d_asm_Nx"
-        VARIABLE = "T2MMIN"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("Tmin_K")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -952,9 +943,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "surface pressure"
-        PRODUCT = "tavg1_2d_slv_Nx"
-        VARIABLE = "PS"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("PS")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -973,9 +962,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "Q"
-        PRODUCT = "tavg1_2d_slv_Nx"
-        VARIABLE = "QV2M"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("Q")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -1186,9 +1173,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "vapor_gccm"
-        PRODUCT = "inst3_2d_asm_Nx"
-        VARIABLE = "TQV"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("vapor_kgsqm")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -1220,9 +1205,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "ozone_cm"
-        PRODUCT = "inst3_2d_asm_Nx"
-        VARIABLE = "TO3"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("ozone_dobson")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -1254,9 +1237,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "U2M"
-        PRODUCT = "inst3_2d_asm_Nx"
-        VARIABLE = "U2M"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("U2M")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -1277,9 +1258,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "V2M"
-        PRODUCT = "inst3_2d_asm_Nx"
-        VARIABLE = "V2M"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("V2M")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -1300,9 +1279,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "CO2SC"
-        PRODUCT = "tavg3_2d_chm_Nx"
-        VARIABLE = "CO2SC"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("CO2SC")
         # 1:30, 4:30, 7:30, 10:30, 13:30, 16:30, 19:30, 22:30 UTC
         EXPECTED_HOURS = [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
 
@@ -1349,9 +1326,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "SWin"
-        PRODUCT = "tavg1_2d_rad_Nx"
-        VARIABLE = "SWGNT"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("SWin")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -1373,9 +1348,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "SWTDN"
-        PRODUCT = "tavg1_2d_rad_Nx"
-        VARIABLE = "SWTDN"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("SWTDN")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -1397,9 +1370,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "ALBVISDR"
-        PRODUCT = "tavg1_2d_rad_Nx"
-        VARIABLE = "ALBVISDR"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("ALBVISDR")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -1421,9 +1392,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "ALBVISDF"
-        PRODUCT = "tavg1_2d_rad_Nx"
-        VARIABLE = "ALBVISDF"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("ALBVISDF")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -1445,9 +1414,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "ALBNIRDF"
-        PRODUCT = "tavg1_2d_rad_Nx"
-        VARIABLE = "ALBNIRDF"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("ALBNIRDF")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -1469,9 +1436,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "ALBNIRDR"
-        PRODUCT = "tavg1_2d_rad_Nx"
-        VARIABLE = "ALBNIRDR"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("ALBNIRDR")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
@@ -1493,9 +1458,7 @@ class GEOS5FPConnection:
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        NAME = "ALBEDO"
-        PRODUCT = "tavg1_2d_rad_Nx"
-        VARIABLE = "ALBEDO"
+        NAME, PRODUCT, VARIABLE = self._get_variable_info("ALBEDO")
         logger.info(
             f"retrieving {cl.name(NAME)} "
             f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
