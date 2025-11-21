@@ -5,8 +5,12 @@ This example demonstrates how to retrieve a week-long time-series of air
 temperature in Celsius using a single OPeNDAP query with a time range.
 """
 
+import warnings
 from datetime import datetime, timedelta
 import pandas as pd
+
+# Suppress xarray SerializationWarning about ambiguous reference dates
+warnings.filterwarnings('ignore', message='.*Ambiguous reference date string.*')
 
 try:
     # Import the direct OPeNDAP query function for efficient time-series retrieval
