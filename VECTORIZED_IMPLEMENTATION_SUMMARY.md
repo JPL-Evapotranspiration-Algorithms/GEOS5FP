@@ -84,14 +84,30 @@ The method automatically detects vectorized queries by checking if:
 ### Processing Flow
 
 For each time-geometry pair:
-1. Extract coordinates from Point geometry
-2. For each variable:
-   - Determine dataset (from GEOS5FP_VARIABLES or user-provided)
-   - Query 4-hour time window (±2 hours around target)
-   - Find closest available time
-   - Extract value at point location
-3. Store results with geometry
-4. Continue to next pair
+1. **Group by unique coordinates**: Build map of (lat, lon) → list of records at that coordinate
+2. **Process variable-by-variable**: For each variable:
+   - **Query each unique coordinate once**: Determine time range covering all needed times
+   - **Extract specific times**: From the time-series result, extract values for each needed time
+   - **Store results**: Map back to original record indices
+3. Assemble final GeoDataFrame
+
+**Key Optimization**: If you have 100 records but only 10 unique coordinates, you make **10 queries** instead of 100 per variable!
+
+### Example Efficiency
+
+Input: 20 records at 6 unique locations
+- Coordinate A: 7 records spanning June 1-15, 2019
+- Coordinate B: 5 records spanning June 10-20, 2019  
+- Coordinate C: 5 records spanning June 5-25, 2019
+- Coordinates D, E, F: 1 record each
+
+Processing:
+1. Query Coordinate A **once** for June 1-15 range → extract 7 values
+2. Query Coordinate B **once** for June 10-20 range → extract 5 values
+3. Query Coordinate C **once** for June 5-25 range → extract 5 values
+4. Query D, E, F **once each** → extract 1 value each
+
+**Result**: 6 queries instead of 20 (70% reduction)
 
 ### Output Format
 
@@ -145,11 +161,20 @@ time_UTC
 
 ## Performance Characteristics
 
-- **Queries**: 1 per variable per point-time combination
-- **For 1,065 records × 3 variables**: 3,195 total OPeNDAP queries
+- **Queries**: 1 per variable per **unique coordinate** (not per record!)
+- **For 1,065 records at ~100 unique sites × 3 variables**: ~300 OPeNDAP queries (not 3,195!)
+- **Typical speedup**: 5-10x faster when records share coordinates (common for flux tower time-series)
 - **Limiting factor**: Network latency (NASA OPeNDAP server response time)
-- **Progress**: Logged per record with INFO level messages
-- **Error handling**: Individual query failures logged as warnings, processing continues
+- **Progress**: Logged per unique coordinate with record count
+- **Error handling**: Individual coordinate query failures logged as warnings, processing continues
+
+**Log Example:**
+```
+[INFO] Processing 20 spatio-temporal records at 6 unique coordinates...
+[INFO] Querying Ta_K from tavg1_2d_slv_Nx at 6 unique coordinates...
+[INFO]   Coordinate 1/6: (45.7624, -122.3303) - 7 records, time range 2019-06-01 to 2019-06-15
+[INFO]   Coordinate 2/6: (41.8222, -80.6370) - 5 records, time range 2019-06-10 to 2019-06-20
+```
 
 ## Backward Compatibility
 

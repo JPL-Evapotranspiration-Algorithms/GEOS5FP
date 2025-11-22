@@ -30,6 +30,7 @@ print("Creating GEOS-5 FP connection...")
 conn = GEOS5FPConnection()
 
 # Query multiple variables using vectorized operation
+# Use predefined variables from GEOS5FP_VARIABLES
 variable_names = ["Ta_K", "SM", "LAI"]
 print(f"Querying variables: {variable_names}")
 print()

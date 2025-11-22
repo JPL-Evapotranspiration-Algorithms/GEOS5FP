@@ -1721,7 +1721,9 @@ class GEOS5FPConnection:
                 else:
                     parsed_times.append(t)
             
-            # Optimize queries: group by unique coordinates and query time ranges
+            # Optimize queries: group by unique coordinates, then cluster times
+            # to avoid querying excessively long time ranges
+            
             # Build mapping of (lat, lon) -> list of (index, time, geometry)
             coord_to_records = {}
             for idx, (time_val, geom) in enumerate(zip(parsed_times, geometries)):
@@ -1746,9 +1748,54 @@ class GEOS5FPConnection:
                     'geometry': geom
                 })
             
+            # Function to cluster times at a coordinate to avoid long queries
+            def cluster_times(records, max_days_per_query=30):
+                """
+                Cluster records by time to keep queries under max_days_per_query duration.
+                Returns list of record clusters.
+                """
+                if not records:
+                    return []
+                
+                # Sort by time
+                sorted_records = sorted(records, key=lambda r: r['time'])
+                
+                clusters = []
+                current_cluster = [sorted_records[0]]
+                
+                for record in sorted_records[1:]:
+                    cluster_start = current_cluster[0]['time']
+                    cluster_end = current_cluster[-1]['time']
+                    record_time = record['time']
+                    
+                    # Check if adding this record would exceed max duration
+                    potential_span = (max(cluster_end, record_time) - 
+                                    min(cluster_start, record_time))
+                    
+                    if potential_span.total_seconds() / 86400 <= max_days_per_query:
+                        # Add to current cluster
+                        current_cluster.append(record)
+                    else:
+                        # Start new cluster
+                        clusters.append(current_cluster)
+                        current_cluster = [record]
+                
+                # Add final cluster
+                if current_cluster:
+                    clusters.append(current_cluster)
+                
+                return clusters
+            
+            # Count total queries needed
+            total_query_batches = 0
+            for coord_key, records in coord_to_records.items():
+                clusters = cluster_times(records, max_days_per_query=30)
+                total_query_batches += len(clusters)
+            
             logger.info(
-                f"Processing {len(parsed_times)} spatio-temporal records "
-                f"at {len(coord_to_records)} unique coordinates..."
+                f"Processing {len(parsed_times)} spatio-temporal records at "
+                f"{len(coord_to_records)} unique coordinates "
+                f"({total_query_batches} query batches)..."
             )
             
             # Initialize results dictionary indexed by original record index
@@ -1778,67 +1825,84 @@ class GEOS5FPConnection:
                 
                 logger.info(
                     f"Querying {var_name} from {var_dataset} "
-                    f"at {len(coord_to_records)} unique coordinates..."
+                    f"at {len(coord_to_records)} coordinates ({total_query_batches} batches)..."
                 )
                 
-                # Query each unique coordinate once with time range covering all needed times
+                batch_num = 0
+                
+                # Query each unique coordinate with time clustering
                 for coord_idx, (coord_key, records) in enumerate(coord_to_records.items(), 1):
                     pt_lat, pt_lon = coord_key
                     
-                    # Get time range covering all times needed at this coordinate
-                    times_at_coord = [r['time'] for r in records]
-                    min_time = min(times_at_coord)
-                    max_time = max(times_at_coord)
-                    
-                    # Add buffer to ensure we get data
-                    time_range_start = min_time - timedelta(hours=2)
-                    time_range_end = max_time + timedelta(hours=2)
+                    # Cluster times to keep queries manageable
+                    time_clusters = cluster_times(records, max_days_per_query=30)
                     
                     logger.info(
                         f"  Coordinate {coord_idx}/{len(coord_to_records)}: "
                         f"({pt_lat:.4f}, {pt_lon:.4f}) - "
-                        f"{len(records)} records, time range {min_time} to {max_time}"
+                        f"{len(records)} records in {len(time_clusters)} time clusters"
                     )
                     
-                    try:
-                        # Single query for this coordinate across all needed times
-                        result = query_geos5fp_point(
-                            dataset=var_dataset,
-                            variable=variable_opendap,
-                            lat=pt_lat,
-                            lon=pt_lon,
-                            time_range=(time_range_start, time_range_end),
-                            dropna=dropna
+                    # Query each time cluster
+                    for cluster_idx, cluster in enumerate(time_clusters, 1):
+                        batch_num += 1
+                        
+                        # Get time range for this cluster
+                        times_in_cluster = [r['time'] for r in cluster]
+                        min_time = min(times_in_cluster)
+                        max_time = max(times_in_cluster)
+                        time_span_days = (max_time - min_time).total_seconds() / 86400
+                        
+                        # Add buffer to ensure we get data
+                        time_range_start = min_time - timedelta(hours=2)
+                        time_range_end = max_time + timedelta(hours=2)
+                        
+                        logger.info(
+                            f"    Batch {batch_num}/{total_query_batches}: "
+                            f"cluster {cluster_idx}/{len(time_clusters)} - "
+                            f"{len(cluster)} records, {time_span_days:.1f} days "
+                            f"({min_time.date()} to {max_time.date()})"
                         )
                         
-                        if len(result.df) == 0:
-                            logger.warning(
-                                f"No data found for coordinate ({pt_lat}, {pt_lon}) "
-                                f"in time range {time_range_start} to {time_range_end}"
+                        try:
+                            # Query for this time cluster at this coordinate
+                            result = query_geos5fp_point(
+                                dataset=var_dataset,
+                                variable=variable_opendap,
+                                lat=pt_lat,
+                                lon=pt_lon,
+                                time_range=(time_range_start, time_range_end),
+                                dropna=dropna
                             )
-                            # Set all records at this coordinate to None for this variable
-                            for record in records:
+                            
+                            if len(result.df) == 0:
+                                logger.warning(
+                                    f"No data found for ({pt_lat}, {pt_lon}) "
+                                    f"in time range {time_range_start.date()} to {time_range_end.date()}"
+                                )
+                                # Set all records in this cluster to None
+                                for record in cluster:
+                                    results_by_index[record['index']][var_name] = None
+                            else:
+                                # Extract values for each needed time in this cluster
+                                for record in cluster:
+                                    target_time = record['time']
+                                    
+                                    # Find closest available time
+                                    time_diffs = abs(result.df.index - target_time)
+                                    closest_idx = time_diffs.argmin()
+                                    value = result.df.iloc[closest_idx][variable_opendap]
+                                    
+                                    # Store in results
+                                    results_by_index[record['index']][var_name] = value
+                        
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to query {var_name} at ({pt_lat}, {pt_lon}): {e}"
+                            )
+                            # Set all records in this cluster to None
+                            for record in cluster:
                                 results_by_index[record['index']][var_name] = None
-                        else:
-                            # Extract values for each needed time at this coordinate
-                            for record in records:
-                                target_time = record['time']
-                                
-                                # Find closest available time
-                                time_diffs = abs(result.df.index - target_time)
-                                closest_idx = time_diffs.argmin()
-                                value = result.df.iloc[closest_idx][variable_opendap]
-                                
-                                # Store in results
-                                results_by_index[record['index']][var_name] = value
-                    
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to query {var_name} at ({pt_lat}, {pt_lon}): {e}"
-                        )
-                        # Set all records at this coordinate to None for this variable
-                        for record in records:
-                            results_by_index[record['index']][var_name] = None
             
             # Convert results dictionary to list in original order
             all_dfs = [results_by_index[i] for i in range(len(parsed_times))]
