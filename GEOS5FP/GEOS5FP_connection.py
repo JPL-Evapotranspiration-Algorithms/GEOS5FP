@@ -1721,14 +1721,10 @@ class GEOS5FPConnection:
                 else:
                     parsed_times.append(t)
             
-            # Process each time-geometry pair
-            all_dfs = []
-            
-            logger.info(f"Processing {len(parsed_times)} spatio-temporal records...")
-            
+            # Optimize queries: group by unique coordinates and query time ranges
+            # Build mapping of (lat, lon) -> list of (index, time, geometry)
+            coord_to_records = {}
             for idx, (time_val, geom) in enumerate(zip(parsed_times, geometries)):
-                logger.info(f"Processing record {idx+1}/{len(parsed_times)}: {time_val} at {geom}")
-                
                 # Extract point coordinates
                 if isinstance(geom, Point):
                     pt_lon, pt_lat = geom.x, geom.y
@@ -1738,62 +1734,114 @@ class GEOS5FPConnection:
                 else:
                     raise ValueError(f"Unsupported geometry type: {type(geom)}")
                 
-                # Query each variable for this point-time
-                point_data = {'time_UTC': time_val}
+                # Round to avoid floating point issues
+                coord_key = (round(pt_lat, 6), round(pt_lon, 6))
                 
-                for var_name in variable_names:
-                    # Determine dataset for this variable
-                    var_dataset = dataset
-                    if var_dataset is None:
-                        if var_name in GEOS5FP_VARIABLES:
-                            _, var_dataset, raw_variable = self._get_variable_info(var_name)
-                        else:
-                            raise ValueError(
-                                f"Dataset must be specified when using raw variable name '{var_name}'. "
-                                f"Known variables: {list(GEOS5FP_VARIABLES.keys())}"
-                            )
+                if coord_key not in coord_to_records:
+                    coord_to_records[coord_key] = []
+                
+                coord_to_records[coord_key].append({
+                    'index': idx,
+                    'time': time_val,
+                    'geometry': geom
+                })
+            
+            logger.info(
+                f"Processing {len(parsed_times)} spatio-temporal records "
+                f"at {len(coord_to_records)} unique coordinates..."
+            )
+            
+            # Initialize results dictionary indexed by original record index
+            results_by_index = {i: {'time_UTC': t, 'geometry': g} 
+                               for i, (t, g) in enumerate(zip(parsed_times, geometries))}
+            
+            # Process each variable
+            for var_name in variable_names:
+                # Determine dataset for this variable
+                var_dataset = dataset
+                if var_dataset is None:
+                    if var_name in GEOS5FP_VARIABLES:
+                        _, var_dataset, raw_variable = self._get_variable_info(var_name)
                     else:
-                        # Use provided dataset, determine variable
-                        if var_name in GEOS5FP_VARIABLES:
-                            _, _, raw_variable = self._get_variable_info(var_name)
-                        else:
-                            raw_variable = var_name
+                        raise ValueError(
+                            f"Dataset must be specified when using raw variable name '{var_name}'. "
+                            f"Known variables: {list(GEOS5FP_VARIABLES.keys())}"
+                        )
+                else:
+                    # Use provided dataset, determine variable
+                    if var_name in GEOS5FP_VARIABLES:
+                        _, _, raw_variable = self._get_variable_info(var_name)
+                    else:
+                        raw_variable = var_name
+                
+                variable_opendap = raw_variable.lower()
+                
+                logger.info(
+                    f"Querying {var_name} from {var_dataset} "
+                    f"at {len(coord_to_records)} unique coordinates..."
+                )
+                
+                # Query each unique coordinate once with time range covering all needed times
+                for coord_idx, (coord_key, records) in enumerate(coord_to_records.items(), 1):
+                    pt_lat, pt_lon = coord_key
                     
-                    variable_opendap = raw_variable.lower()
+                    # Get time range covering all times needed at this coordinate
+                    times_at_coord = [r['time'] for r in records]
+                    min_time = min(times_at_coord)
+                    max_time = max(times_at_coord)
                     
-                    logger.info(f"  Querying {var_name} from {var_dataset}...")
+                    # Add buffer to ensure we get data
+                    time_range_start = min_time - timedelta(hours=2)
+                    time_range_end = max_time + timedelta(hours=2)
+                    
+                    logger.info(
+                        f"  Coordinate {coord_idx}/{len(coord_to_records)}: "
+                        f"({pt_lat:.4f}, {pt_lon:.4f}) - "
+                        f"{len(records)} records, time range {min_time} to {max_time}"
+                    )
                     
                     try:
-                        # Query small time window around target time
-                        time_window_start = time_val - timedelta(hours=2)
-                        time_window_end = time_val + timedelta(hours=2)
-                        
+                        # Single query for this coordinate across all needed times
                         result = query_geos5fp_point(
                             dataset=var_dataset,
                             variable=variable_opendap,
                             lat=pt_lat,
                             lon=pt_lon,
-                            time_range=(time_window_start, time_window_end),
+                            time_range=(time_range_start, time_range_end),
                             dropna=dropna
                         )
                         
                         if len(result.df) == 0:
-                            logger.warning(f"No data found for point ({pt_lat}, {pt_lon}) at time {time_val}")
-                            point_data[var_name] = None
+                            logger.warning(
+                                f"No data found for coordinate ({pt_lat}, {pt_lon}) "
+                                f"in time range {time_range_start} to {time_range_end}"
+                            )
+                            # Set all records at this coordinate to None for this variable
+                            for record in records:
+                                results_by_index[record['index']][var_name] = None
                         else:
-                            # Find closest time
-                            time_diffs = abs(result.df.index - time_val)
-                            closest_idx = time_diffs.argmin()
-                            value = result.df.iloc[closest_idx][variable_opendap]
-                            point_data[var_name] = value
+                            # Extract values for each needed time at this coordinate
+                            for record in records:
+                                target_time = record['time']
+                                
+                                # Find closest available time
+                                time_diffs = abs(result.df.index - target_time)
+                                closest_idx = time_diffs.argmin()
+                                value = result.df.iloc[closest_idx][variable_opendap]
+                                
+                                # Store in results
+                                results_by_index[record['index']][var_name] = value
                     
                     except Exception as e:
-                        logger.warning(f"Failed to query {var_name} at ({pt_lat}, {pt_lon}), time {time_val}: {e}")
-                        point_data[var_name] = None
-                
-                # Add geometry
-                point_data['geometry'] = geom
-                all_dfs.append(point_data)
+                        logger.warning(
+                            f"Failed to query {var_name} at ({pt_lat}, {pt_lon}): {e}"
+                        )
+                        # Set all records at this coordinate to None for this variable
+                        for record in records:
+                            results_by_index[record['index']][var_name] = None
+            
+            # Convert results dictionary to list in original order
+            all_dfs = [results_by_index[i] for i in range(len(parsed_times))]
             
             # Create DataFrame from results
             result_df = pd.DataFrame(all_dfs)
