@@ -1802,7 +1802,10 @@ class GEOS5FPConnection:
             results_by_index = {i: {'time_UTC': t, 'geometry': g} 
                                for i, (t, g) in enumerate(zip(parsed_times, geometries))}
             
-            # Process each variable
+            # Group variables by dataset for efficient multi-variable queries
+            from collections import defaultdict
+            dataset_to_variables = defaultdict(list)
+            
             for var_name in variable_names:
                 # Determine dataset for this variable
                 var_dataset = dataset
@@ -1822,11 +1825,27 @@ class GEOS5FPConnection:
                         raw_variable = var_name
                 
                 variable_opendap = raw_variable.lower()
+                dataset_to_variables[var_dataset].append((var_name, variable_opendap))
+            
+            # Import multi-variable query function
+            from GEOS5FP.GEOS5FP_point import query_geos5fp_point_multi
+            
+            # Process each dataset (querying all its variables together)
+            for var_dataset, var_list in dataset_to_variables.items():
+                var_names_in_dataset = [v[0] for v in var_list]
+                var_opendap_names = [v[1] for v in var_list]
                 
-                logger.info(
-                    f"Querying {var_name} from {var_dataset} "
-                    f"at {len(coord_to_records)} coordinates ({total_query_batches} batches)..."
-                )
+                if len(var_list) == 1:
+                    logger.info(
+                        f"Querying {var_names_in_dataset[0]} from {var_dataset} "
+                        f"at {len(coord_to_records)} coordinates ({total_query_batches} batches)..."
+                    )
+                else:
+                    logger.info(
+                        f"Querying {len(var_list)} variables ({', '.join(var_names_in_dataset)}) "
+                        f"from {var_dataset} at {len(coord_to_records)} coordinates "
+                        f"({total_query_batches} batches)..."
+                    )
                 
                 batch_num = 0
                 
@@ -1865,24 +1884,38 @@ class GEOS5FPConnection:
                         )
                         
                         try:
-                            # Query for this time cluster at this coordinate
-                            result = query_geos5fp_point(
-                                dataset=var_dataset,
-                                variable=variable_opendap,
-                                lat=pt_lat,
-                                lon=pt_lon,
-                                time_range=(time_range_start, time_range_end),
-                                dropna=dropna
-                            )
+                            # Query all variables for this dataset in a single request
+                            if len(var_opendap_names) == 1:
+                                # Single variable - use original function
+                                from GEOS5FP.GEOS5FP_point import query_geos5fp_point
+                                result = query_geos5fp_point(
+                                    dataset=var_dataset,
+                                    variable=var_opendap_names[0],
+                                    lat=pt_lat,
+                                    lon=pt_lon,
+                                    time_range=(time_range_start, time_range_end),
+                                    dropna=dropna
+                                )
+                            else:
+                                # Multiple variables - use multi-variable query
+                                result = query_geos5fp_point_multi(
+                                    dataset=var_dataset,
+                                    variables=var_opendap_names,
+                                    lat=pt_lat,
+                                    lon=pt_lon,
+                                    time_range=(time_range_start, time_range_end),
+                                    dropna=dropna
+                                )
                             
                             if len(result.df) == 0:
                                 logger.warning(
                                     f"No data found for ({pt_lat}, {pt_lon}) "
                                     f"in time range {time_range_start.date()} to {time_range_end.date()}"
                                 )
-                                # Set all records in this cluster to None
+                                # Set all records in this cluster to None for all variables
                                 for record in cluster:
-                                    results_by_index[record['index']][var_name] = None
+                                    for var_name in var_names_in_dataset:
+                                        results_by_index[record['index']][var_name] = None
                             else:
                                 # Extract values for each needed time in this cluster
                                 for record in cluster:
@@ -1891,18 +1924,20 @@ class GEOS5FPConnection:
                                     # Find closest available time
                                     time_diffs = abs(result.df.index - target_time)
                                     closest_idx = time_diffs.argmin()
-                                    value = result.df.iloc[closest_idx][variable_opendap]
                                     
-                                    # Store in results
-                                    results_by_index[record['index']][var_name] = value
+                                    # Extract all variables
+                                    for var_name, var_opendap in zip(var_names_in_dataset, var_opendap_names):
+                                        value = result.df.iloc[closest_idx][var_opendap]
+                                        results_by_index[record['index']][var_name] = value
                         
                         except Exception as e:
                             logger.warning(
-                                f"Failed to query {var_name} at ({pt_lat}, {pt_lon}): {e}"
+                                f"Failed to query variables at ({pt_lat}, {pt_lon}): {e}"
                             )
-                            # Set all records in this cluster to None
+                            # Set all records in this cluster to None for all variables
                             for record in cluster:
-                                results_by_index[record['index']][var_name] = None
+                                for var_name in var_names_in_dataset:
+                                    results_by_index[record['index']][var_name] = None
             
             # Convert results dictionary to list in original order
             all_dfs = [results_by_index[i] for i in range(len(parsed_times))]
