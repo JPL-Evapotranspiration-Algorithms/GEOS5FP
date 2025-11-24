@@ -13,7 +13,7 @@ from GEOS5FP import GEOS5FPConnection
 from spatiotemporal_utils import load_spatiotemporal_csv
 
 # Load data
-gdf = load_spatiotemporal_csv('spatio_temporal.csv')
+gdf = load_spatiotemporal_csv('notebooks/spatio_temporal.csv')
 
 # Query
 conn = GEOS5FPConnection()

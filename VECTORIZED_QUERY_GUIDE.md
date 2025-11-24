@@ -21,7 +21,7 @@ from GEOS5FP import GEOS5FPConnection
 from spatiotemporal_utils import load_spatiotemporal_csv
 
 # Load CSV with geometry column (WKT format)
-gdf = load_spatiotemporal_csv('spatio_temporal.csv')
+gdf = load_spatiotemporal_csv('notebooks/spatio_temporal.csv')
 
 # GeoDataFrame has columns: ID, time_UTC, geometry
 print(gdf.head())
@@ -192,7 +192,7 @@ Use the provided utility function:
 ```python
 from spatiotemporal_utils import load_spatiotemporal_csv
 
-gdf = load_spatiotemporal_csv('spatio_temporal.csv')
+gdf = load_spatiotemporal_csv('notebooks/spatio_temporal.csv')
 # Automatically parses WKT geometry and sets CRS to EPSG:4326
 ```
 

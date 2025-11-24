@@ -209,7 +209,7 @@ python test_vectorized_simple.py
 python -c "
 from spatiotemporal_utils import load_spatiotemporal_csv
 from GEOS5FP import GEOS5FPConnection
-gdf = load_spatiotemporal_csv('spatio_temporal.csv').head(5)
+gdf = load_spatiotemporal_csv('notebooks/spatio_temporal.csv').head(5)
 conn = GEOS5FPConnection()
 results = conn.variable(['Ta_K', 'SM', 'LAI'], time_UTC=gdf['time_UTC'], geometry=gdf['geometry'])
 print(results)

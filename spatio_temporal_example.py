@@ -14,7 +14,7 @@ from spatiotemporal_utils import load_spatiotemporal_csv
 
 # Load spatio_temporal.csv as a GeoDataFrame
 print("Loading spatio-temporal data...")
-gdf = load_spatiotemporal_csv('spatio_temporal.csv')
+gdf = load_spatiotemporal_csv('notebooks/spatio_temporal.csv')
 print(f"Loaded {len(gdf)} spatio-temporal records")
 print(f"Date range: {gdf['time_UTC'].min()} to {gdf['time_UTC'].max()}")
 print()
@@ -59,7 +59,7 @@ print(f"CRS: {results.crs}")
 print()
 
 # Export to CSV
-output_file = 'spatio_temporal_results.csv'
+output_file = 'notebooks/spatio_temporal_results.csv'
 print(f"Exporting results to {output_file}...")
 results.to_csv(output_file)
 print(f"Successfully exported {len(results)} records")

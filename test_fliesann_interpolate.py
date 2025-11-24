@@ -9,7 +9,7 @@ from GEOS5FP import GEOS5FPConnection
 import time
 
 # Load only first 5 records
-df = pd.read_csv('ECOv003_calval_times_locations.csv', nrows=5)
+df = pd.read_csv('notebooks/ECOv003_calval_times_locations.csv', nrows=5)
 print(f"Testing with {len(df)} records\n")
 
 # Parse coordinates

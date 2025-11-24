@@ -18,7 +18,7 @@ print("OPTIMIZED VECTORIZED QUERY TEST (with time clustering)", flush=True)
 print("=" * 70, flush=True)
 print(flush=True)
 
-gdf = load_spatiotemporal_csv('spatio_temporal.csv').head(20)
+gdf = load_spatiotemporal_csv('notebooks/spatio_temporal.csv').head(20)
 
 # Analyze unique coordinates
 unique_coords = gdf.geometry.apply(lambda g: (round(g.x, 6), round(g.y, 6)))

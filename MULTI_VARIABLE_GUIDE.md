@@ -80,7 +80,7 @@ df = conn.variable(
 import geopandas as gpd
 
 # Load point locations from CSV
-gdf = gpd.read_file('spatio_temporal.csv')
+gdf = gpd.read_file('notebooks/spatio_temporal.csv')
 
 # Get first location
 first_record = gdf.iloc[0]

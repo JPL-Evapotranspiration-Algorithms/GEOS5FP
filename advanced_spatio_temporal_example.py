@@ -15,7 +15,7 @@ from spatiotemporal_utils import load_spatiotemporal_csv
 
 # Load spatio-temporal data
 print("Loading spatio-temporal.csv...")
-gdf = load_spatiotemporal_csv('spatio_temporal.csv')
+gdf = load_spatiotemporal_csv('notebooks/spatio_temporal.csv')
 print(f"Loaded {len(gdf)} records")
 print()
 

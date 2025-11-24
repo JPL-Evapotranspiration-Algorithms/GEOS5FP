@@ -13,7 +13,7 @@ import time
 
 # Load the CSV file
 print("Loading ECOv003_calval_times_locations.csv...")
-df = pd.read_csv('ECOv003_calval_times_locations.csv')
+df = pd.read_csv('notebooks/ECOv003_calval_times_locations.csv')
 print(f"Loaded {len(df)} records\n")
 
 # Display first few rows
@@ -164,7 +164,7 @@ column_order = ['ID', 'time_UTC', 'lat', 'lon', 'COT', 'AOT', 'vapor_gccm', 'ozo
 final_df = final_df[column_order]
 
 # Save results to CSV
-output_file = 'FLiESANN_inputs_results.csv'
+output_file = 'notebooks/FLiESANN_inputs_results.csv'
 print(f"Saving results to {output_file}...")
 final_df.to_csv(output_file, index=False)
 

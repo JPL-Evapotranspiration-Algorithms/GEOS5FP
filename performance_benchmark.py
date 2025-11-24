@@ -245,7 +245,7 @@ def main():
     
     # Load test data
     print("Loading test data...", flush=True)
-    gdf = load_spatiotemporal_csv('spatio_temporal.csv')
+    gdf = load_spatiotemporal_csv('notebooks/spatio_temporal.csv')
     
     # Use small subset for quick testing (scales to 1-2 minutes)
     test_size = 5  # 5 records for quick comparison
