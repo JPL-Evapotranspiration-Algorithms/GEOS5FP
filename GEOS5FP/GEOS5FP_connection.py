@@ -1525,6 +1525,7 @@ class GEOS5FPConnection:
             lat: Union[float, List[float], pd.Series] = None,
             lon: Union[float, List[float], pd.Series] = None,
             dropna: bool = True,
+            temporal_interpolation: str = "nearest",
             **kwargs) -> Union[Raster, gpd.GeoDataFrame]:
         """
         General-purpose variable retrieval method that can query any variable from any dataset.
@@ -1569,6 +1570,11 @@ class GEOS5FPConnection:
             Longitude for point query (alternative to providing Point geometry)
         dropna : bool, default=True
             Whether to drop NaN values from point query results
+        temporal_interpolation : str, default="nearest"
+            Method for handling different temporal resolutions when querying multiple variables:
+            - "nearest": Use nearest neighbor in time for each variable independently
+            - "interpolate": Linear interpolation between observations before and after target time
+            This parameter is only used for multi-variable queries at a single time point.
         **kwargs : dict
             Additional keyword arguments passed to interpolation or query functions
         
@@ -2205,8 +2211,17 @@ class GEOS5FPConnection:
                         "Install with: conda install -c conda-forge xarray netcdf4"
                     )
                 
+                # Import point query function
+                from GEOS5FP.GEOS5FP_point import query_geos5fp_point
+                
                 if isinstance(time_UTC, str):
                     time_UTC = parser.parse(time_UTC)
+                
+                # Validate temporal_interpolation parameter
+                if temporal_interpolation not in ["nearest", "interpolate"]:
+                    raise ValueError(
+                        f"temporal_interpolation must be 'nearest' or 'interpolate', got '{temporal_interpolation}'"
+                    )
                 
                 points = self._extract_points(geometry)
                 all_variable_dfs = []
@@ -2240,9 +2255,11 @@ class GEOS5FPConnection:
                     dfs = []
                     for pt_lat, pt_lon in points:
                         try:
-                            # Query small time window around target time
-                            time_window_start = time_UTC - timedelta(hours=2)
-                            time_window_end = time_UTC + timedelta(hours=2)
+                            # Query time window around target time
+                            # Larger window for interpolation to ensure we get before/after samples
+                            time_window_hours = 4 if temporal_interpolation == "interpolate" else 2
+                            time_window_start = time_UTC - timedelta(hours=time_window_hours)
+                            time_window_end = time_UTC + timedelta(hours=time_window_hours)
                             
                             result = query_geos5fp_point(
                                 dataset=var_dataset,
@@ -2257,10 +2274,54 @@ class GEOS5FPConnection:
                                 logger.warning(f"No data found for point ({pt_lat}, {pt_lon})")
                                 continue
                             
-                            # Find closest time
-                            time_diffs = abs(result.df.index - time_UTC)
-                            closest_idx = time_diffs.argmin()
-                            df_point = result.df.iloc[[closest_idx]].copy()
+                            # Apply temporal sampling method
+                            if temporal_interpolation == "nearest":
+                                # Find closest time
+                                time_diffs = abs(result.df.index - time_UTC)
+                                closest_idx = time_diffs.argmin()
+                                df_point = result.df.iloc[[closest_idx]].copy()
+                                
+                            elif temporal_interpolation == "interpolate":
+                                # Find times before and after target
+                                times_before = result.df.index[result.df.index <= time_UTC]
+                                times_after = result.df.index[result.df.index >= time_UTC]
+                                
+                                if len(times_before) > 0 and len(times_after) > 0:
+                                    # Get closest time before and after
+                                    time_before = times_before[-1]
+                                    time_after = times_after[0]
+                                    
+                                    if time_before == time_after:
+                                        # Exact match
+                                        df_point = result.df.loc[[time_before]].copy()
+                                    else:
+                                        # Linear interpolation
+                                        value_before = result.df.loc[time_before, variable_opendap]
+                                        value_after = result.df.loc[time_after, variable_opendap]
+                                        
+                                        # Calculate interpolation weight
+                                        total_delta = (time_after - time_before).total_seconds()
+                                        target_delta = (time_UTC - time_before).total_seconds()
+                                        weight = target_delta / total_delta
+                                        
+                                        # Interpolate
+                                        interpolated_value = value_before + weight * (value_after - value_before)
+                                        
+                                        # Create DataFrame with interpolated value
+                                        df_point = pd.DataFrame(
+                                            {variable_opendap: [interpolated_value]},
+                                            index=[time_UTC]
+                                        )
+                                        df_point.index.name = 'time'
+                                else:
+                                    # Fall back to nearest if can't interpolate
+                                    logger.warning(
+                                        f"Cannot interpolate for point ({pt_lat}, {pt_lon}), "
+                                        "using nearest instead"
+                                    )
+                                    time_diffs = abs(result.df.index - time_UTC)
+                                    closest_idx = time_diffs.argmin()
+                                    df_point = result.df.iloc[[closest_idx]].copy()
                             
                             if variable_opendap in df_point.columns:
                                 df_point = df_point.rename(columns={variable_opendap: var_name})
@@ -2286,25 +2347,35 @@ class GEOS5FPConnection:
                 if len(all_variable_dfs) == 1:
                     result_df = all_variable_dfs[0]
                 else:
-                    # Save geometry from first dataframe
-                    geometry_col = all_variable_dfs[0]['geometry'].copy()
+                    # When using temporal interpolation, all variables should be at exact target time
+                    # For nearest, they may be at slightly different times, so we merge with tolerance
                     
-                    # Merge on index (time), excluding geometry from all but first
-                    result_df = all_variable_dfs[0].drop(columns=['geometry'])
+                    # Start with first variable's dataframe
+                    result_df = all_variable_dfs[0].copy()
+                    
+                    # Merge each subsequent variable
                     for var_df in all_variable_dfs[1:]:
                         # Get the variable column name (exclude geometry)
                         var_cols = [col for col in var_df.columns if col != 'geometry']
                         
-                        # Merge on index
-                        result_df = result_df.merge(
-                            var_df[var_cols],
-                            left_index=True,
-                            right_index=True,
-                            how='outer'
-                        )
-                    
-                    # Add geometry column at the end
-                    result_df['geometry'] = geometry_col
+                        if temporal_interpolation == "interpolate":
+                            # Exact match on time index (all should be at target time_UTC)
+                            result_df = result_df.merge(
+                                var_df[var_cols],
+                                left_index=True,
+                                right_index=True,
+                                how='outer'
+                            )
+                        else:
+                            # Nearest neighbor - use merge_asof to handle small time differences
+                            result_df = pd.merge_asof(
+                                result_df.sort_index(),
+                                var_df[var_cols].sort_index(),
+                                left_index=True,
+                                right_index=True,
+                                direction='nearest',
+                                tolerance=pd.Timedelta(hours=2)
+                            )
                 
                 # Convert to GeoDataFrame
                 result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
