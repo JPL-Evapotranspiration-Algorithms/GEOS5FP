@@ -3,7 +3,7 @@ requires = ["setuptools>=60", "setuptools-scm>=8.0", "wheel"]
 
 [project]
 name = "GEOS5FP"
-version = "1.3.2"
+version = "2.0.0"
 description = "generates rasters of near-real-time GEOS-5 FP near-surface meteorology"
 readme = "README.md"
 authors = [
@@ -19,6 +19,7 @@ dependencies = [
     "colored-logging",
     "geopandas",
     "matplotlib",
+    "netcdf4",
     "numpy",
     "pandas",
     "pyproj",
@@ -30,7 +31,8 @@ dependencies = [
     "scipy",
     "sentinel-tiles",
     "shapely",
-    "urllib3"
+    "urllib3",
+    "xarray"
 ]
 
 requires-python = ">=3.10"
@@ -46,7 +48,11 @@ dev = [
 ]
 
 [tool.setuptools.package-data]
-geos5fp = ["*.txt"]
+GEOS5FP = ["*.csv"]
+
+[tool.setuptools.packages.find]
+include = ["GEOS5FP*"]
+exclude = ["tests*", "examples*", "experiments*", "performance*", "guides*", "notebooks*"]
 
 [project.urls]
-"Homepage" = "https://github.com/JPL-Evapotranspiration-Algorithms/geos5fp"
+"Homepage" = "https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP"

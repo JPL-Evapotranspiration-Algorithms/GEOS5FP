@@ -1,5 +1,6 @@
-from os.path import join
+from os.path import join, dirname, abspath
 from matplotlib.colors import LinearSegmentedColormap
+import csv
 
 DEFAULT_READ_TIMEOUT = 60
 DEFAULT_RETRIES = 3
@@ -31,3 +32,23 @@ NDVI_CMAP = LinearSegmentedColormap.from_list(
 
 DEFAULT_UPSAMPLING = "mean"
 DEFAULT_DOWNSAMPLING = "cubic"
+
+# GEOS-5 FP Variable Mappings
+# Load variable mappings from CSV file
+def _load_variables():
+    """Load GEOS-5 FP variable mappings from embedded CSV file."""
+    variables_csv = join(dirname(abspath(__file__)), "variables.csv")
+    variables_dict = {}
+    
+    with open(variables_csv, 'r') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            variable_name = row['variable_name']
+            description = row['description']
+            product = row['product']
+            variable = row['variable']
+            variables_dict[variable_name] = (description, product, variable)
+    
+    return variables_dict
+
+GEOS5FP_VARIABLES = _load_variables()
