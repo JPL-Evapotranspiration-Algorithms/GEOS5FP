@@ -9,6 +9,7 @@ in a single request vs sequential queries.
 import sys
 import time
 import pandas as pd
+sys.path.insert(0, '..')
 from spatiotemporal_utils import load_spatiotemporal_csv
 from GEOS5FP import GEOS5FPConnection
 
@@ -66,7 +67,7 @@ def main():
     
     # Load test data
     print("Loading test data...")
-    gdf = load_spatiotemporal_csv('notebooks/spatio_temporal.csv')
+    gdf = load_spatiotemporal_csv('../notebooks/spatio_temporal.csv')
     
     # Use small subset for quick testing
     test_size = 5

@@ -6,6 +6,8 @@ This script shows how to efficiently query multiple GEOS-5 FP variables at diffe
 locations and times by passing lists directly to the variable() method.
 """
 
+import sys
+sys.path.insert(0, '..')
 import geopandas as gpd
 import pandas as pd
 from datetime import datetime
@@ -14,7 +16,7 @@ from spatiotemporal_utils import load_spatiotemporal_csv
 
 # Load spatio_temporal.csv as a GeoDataFrame
 print("Loading spatio-temporal data...")
-gdf = load_spatiotemporal_csv('notebooks/spatio_temporal.csv')
+gdf = load_spatiotemporal_csv('../notebooks/spatio_temporal.csv')
 print(f"Loaded {len(gdf)} spatio-temporal records")
 print(f"Date range: {gdf['time_UTC'].min()} to {gdf['time_UTC'].max()}")
 print()
@@ -59,7 +61,7 @@ print(f"CRS: {results.crs}")
 print()
 
 # Export to CSV
-output_file = 'notebooks/spatio_temporal_results.csv'
+output_file = '../notebooks/spatio_temporal_results.csv'
 print(f"Exporting results to {output_file}...")
 results.to_csv(output_file)
 print(f"Successfully exported {len(results)} records")

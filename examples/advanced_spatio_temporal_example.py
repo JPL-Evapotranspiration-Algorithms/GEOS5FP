@@ -7,6 +7,8 @@ This script demonstrates how to:
 3. Combine results into a comprehensive dataset
 """
 
+import sys
+sys.path.insert(0, '..')
 import geopandas as gpd
 import pandas as pd
 from datetime import datetime
@@ -15,7 +17,7 @@ from spatiotemporal_utils import load_spatiotemporal_csv
 
 # Load spatio-temporal data
 print("Loading spatio-temporal.csv...")
-gdf = load_spatiotemporal_csv('notebooks/spatio_temporal.csv')
+gdf = load_spatiotemporal_csv('../notebooks/spatio_temporal.csv')
 print(f"Loaded {len(gdf)} records")
 print()
 
