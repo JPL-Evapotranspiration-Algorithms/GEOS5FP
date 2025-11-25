@@ -1,6 +1,6 @@
 """Tests for time and date handling."""
 import pytest
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from dateutil import parser
 from GEOS5FP import GEOS5FPConnection
 
@@ -174,7 +174,7 @@ class TestUTCHandling:
     
     def test_utcnow(self):
         """Test getting current UTC time."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         assert isinstance(now, datetime)
         assert now.year >= 2024
