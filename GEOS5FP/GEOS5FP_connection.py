@@ -1632,7 +1632,8 @@ class GEOS5FPConnection:
 
     def variable(
             self,
-            variable_name: Union[str, List[str]],
+            target_variables: Union[str, List[str]] = None,
+            targets_df: Union[pd.DataFrame, gpd.GeoDataFrame] = None,
             time_UTC: Union[datetime, str, List[datetime], List[str], pd.Series] = None,
             time_range: Tuple[Union[datetime, str], Union[datetime, str]] = None,
             dataset: str = None,
@@ -1642,6 +1643,7 @@ class GEOS5FPConnection:
             lon: Union[float, List[float], pd.Series] = None,
             dropna: bool = True,
             temporal_interpolation: str = "nearest",
+            variable_name: Union[str, List[str]] = None,
             **kwargs) -> Union[Raster, gpd.GeoDataFrame]:
         """
         General-purpose variable retrieval method that can query any variable from any dataset.
@@ -1653,7 +1655,7 @@ class GEOS5FPConnection:
         
         Parameters
         ----------
-        variable_name : str or list of str
+        target_variables : str or list of str
             Name(s) of the variable(s) to retrieve. Can be either:
             - A single variable name (str): "Ta_K", "SM", "SWin", etc.
             - A list of variable names (List[str]): ["Ta_K", "SM", "SWin"]
@@ -1661,6 +1663,11 @@ class GEOS5FPConnection:
             - A predefined variable name from GEOS5FP_VARIABLES (e.g., "Ta_K", "SM", "SWin")
             - A raw GEOS-5 FP variable name (e.g., "T2M", "SFMC", "SWGDN")
             When multiple variables are requested with point geometry, each variable becomes a column.
+        targets_df : DataFrame or GeoDataFrame, optional
+            Input table containing 'time_UTC' and 'geometry' columns. When provided,
+            the target variables will be queried for each row and added as new columns
+            to this table, which is then returned. This is useful for generating
+            validation tables or adding GEOS-5 FP data to existing datasets.
         time_UTC : datetime, str, list, or Series, optional
             Date/time in UTC. Can be:
             - Single datetime or str for raster queries or single point query
@@ -1744,10 +1751,21 @@ class GEOS5FPConnection:
         
         # Example 5: Query multiple predefined variables
         >>> df = conn.variable(
-        ...     ["Ta_K", "SM", "SWin"],
+        ...     target_variables=["Ta_K", "SM", "SWin"],
         ...     time_range=(start_time, end_time),
         ...     lat=40.7,
         ...     lon=-74.0
+        ... )
+        
+        # Example 6: Generate table with target variables
+        >>> import geopandas as gpd
+        >>> targets = gpd.GeoDataFrame({
+        ...     'time_UTC': [datetime(2024, 11, 15, 12), datetime(2024, 11, 15, 13)],
+        ...     'geometry': [Point(-118.25, 34.05), Point(-74.0, 40.7)]
+        ... })
+        >>> result = conn.variable(
+        ...     target_variables=["Ta_C", "RH"],
+        ...     targets_df=targets
         ... )
         
         Notes
@@ -1760,12 +1778,30 @@ class GEOS5FPConnection:
         - Multiple variables can only be queried simultaneously for point geometries
         - Raster queries only support single variables
         """
-        # Normalize variable_name to list
-        if isinstance(variable_name, str):
-            variable_names = [variable_name]
+        # Handle backward compatibility: variable_name is deprecated, use target_variables
+        if target_variables is None and variable_name is not None:
+            target_variables = variable_name
+        elif target_variables is None:
+            raise ValueError("target_variables parameter is required")
+        
+        # Handle targets_df parameter
+        if targets_df is not None:
+            # Validate targets_df has required columns
+            if 'time_UTC' not in targets_df.columns:
+                raise ValueError("targets_df must contain 'time_UTC' column")
+            if 'geometry' not in targets_df.columns:
+                raise ValueError("targets_df must contain 'geometry' column")
+            
+            # Extract time_UTC and geometry from targets_df
+            time_UTC = targets_df['time_UTC']
+            geometry = targets_df['geometry']
+        
+        # Normalize target_variables to list
+        if isinstance(target_variables, str):
+            variable_names = [target_variables]
             single_variable = True
         else:
-            variable_names = variable_name
+            variable_names = target_variables
             single_variable = False
         
         # Validate inputs
@@ -2158,6 +2194,24 @@ class GEOS5FPConnection:
                 cols = [c for c in result_gdf.columns if c != 'geometry']
                 cols.append('geometry')
                 result_gdf = result_gdf[cols]
+            
+            # Handle targets_df: merge results back into original table
+            if targets_df is not None:
+                # Drop time_UTC and geometry from result_gdf as they're already in targets_df
+                result_cols = [c for c in result_gdf.columns if c not in ['time_UTC', 'geometry']]
+                result_data = result_gdf[result_cols].reset_index(drop=True)
+                
+                # Add variable columns to targets_df
+                for col in result_cols:
+                    targets_df[col] = result_data[col].values
+                
+                # Ensure geometry column is at the end
+                if 'geometry' in targets_df.columns:
+                    cols = [c for c in targets_df.columns if c != 'geometry']
+                    cols.append('geometry')
+                    targets_df = targets_df[cols]
+                
+                return targets_df
             
             return result_gdf
         
