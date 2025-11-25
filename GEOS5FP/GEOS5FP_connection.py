@@ -183,7 +183,7 @@ class GEOS5FPConnection:
 
     @property
     def years_available(self) -> List[date]:
-        listing = self.list_URL(self.remote)
+        listing = self.list_remote_directory(self.remote)
         dates = sorted([date(int(item[1:]), 1, 1) for item in listing if item.startswith("Y")])
 
         return dates
@@ -200,7 +200,7 @@ class GEOS5FPConnection:
         if requests.head(year_URL).status_code == 404:
             raise GEOS5FPYearNotAvailable(f"GEOS-5 FP year not available: {year_URL}")
 
-        listing = self.list_URL(year_URL)
+        listing = self.list_remote_directory(year_URL)
         dates = sorted([date(year, int(item[1:]), 1) for item in listing if item.startswith("M")])
 
         return dates
@@ -217,7 +217,7 @@ class GEOS5FPConnection:
         if requests.head(month_URL).status_code == 404:
             raise GEOS5FPMonthNotAvailable(f"GEOS-5 FP month not available: {month_URL}")
 
-        listing = self.list_URL(month_URL)
+        listing = self.list_remote_directory(month_URL)
         dates = sorted([date(year, month, int(item[1:])) for item in listing if item.startswith("D")])
 
         return dates
@@ -266,7 +266,7 @@ class GEOS5FPConnection:
             retries -= 1
 
             try:
-                return self.http_listing(self.latest_date_available).sort_values(by="time_UTC").iloc[-1].time_UTC.to_pydatetime()
+                return self.list_GEOS5FP_granules(self.latest_date_available).sort_values(by="time_UTC").iloc[-1].time_UTC.to_pydatetime()
             except Exception as e:
                 logger.warning(e)
                 sleep(wait_seconds)
@@ -276,7 +276,8 @@ class GEOS5FPConnection:
     def time_from_URL(self, URL: str) -> datetime:
         return datetime.strptime(URL.split(".")[-3], "%Y%m%d_%H%M")
 
-    def list_URL(self, URL: str, timeout: float = None, retries: int = None) -> List[str]:
+    def list_remote_directory(self, URL: str, timeout: float = None, retries: int = None) -> List[str]:
+        """Fetch and cache the contents of a remote directory."""
         if URL in self._listings:
             return self._listings[URL]
         else:
@@ -285,12 +286,13 @@ class GEOS5FPConnection:
 
             return listing
 
-    def http_listing(
+    def list_GEOS5FP_granules(
             self,
             date_UTC: Union[datetime, str],
             product_name: str = None,
             timeout: float = None,
             retries: int = None) -> pd.DataFrame:
+        """Get GEOS-5 FP granule metadata for a specific day."""
         if timeout is None:
             timeout = self.DEFAULT_TIMEOUT_SECONDS
 
@@ -304,7 +306,7 @@ class GEOS5FPConnection:
 
         logger.info(f"listing URL: {cl.URL(day_URL)}")
         # listing = HTTP_listing(day_URL, timeout=timeout, retries=retries)
-        listing = self.list_URL(day_URL, timeout=timeout, retries=retries)
+        listing = self.list_remote_directory(day_URL, timeout=timeout, retries=retries)
 
         if product_name is None:
             URLs = sorted([
@@ -380,7 +382,7 @@ class GEOS5FPConnection:
             retries: int = None,
             use_http_listing: bool = False) -> pd.DataFrame:
         if use_http_listing:
-            return self.http_listing(
+            return self.list_GEOS5FP_granules(
                 date_UTC=date_UTC,
                 product_name=product_name,
                 timeout=timeout,
@@ -1883,7 +1885,7 @@ class GEOS5FPConnection:
                             if dep not in variable_names and dep not in [v[0] for v in sum(dataset_to_variables.values(), [])]:
                                 # Add dependency variable
                                 if dep in GEOS5FP_VARIABLES:
-                                    _, dep_dataset, dep_raw_variable = self._get_variable_info(dep)
+                                    _, dep_dataset, dep_raw_variable = get_variable_info(dep)
                                     dep_opendap = dep_raw_variable.lower()
                                     dataset_to_variables[dep_dataset].append((dep, dep_opendap))
                     continue
@@ -2149,7 +2151,7 @@ class GEOS5FPConnection:
                 var_dataset = dataset
                 if var_dataset is None:
                     if var_name in GEOS5FP_VARIABLES:
-                        _, var_dataset, raw_variable = self._get_variable_info(var_name)
+                        _, var_dataset, raw_variable = get_variable_info(var_name)
                     else:
                         raise ValueError(
                             f"Dataset must be specified when using raw variable name '{var_name}'. "
@@ -2158,7 +2160,7 @@ class GEOS5FPConnection:
                 else:
                     # Use provided dataset, determine variable
                     if var_name in GEOS5FP_VARIABLES:
-                        _, _, raw_variable = self._get_variable_info(var_name)
+                        _, _, raw_variable = get_variable_info(var_name)
                     else:
                         raw_variable = var_name
                 
