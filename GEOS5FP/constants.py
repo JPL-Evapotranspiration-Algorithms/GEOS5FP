@@ -31,7 +31,7 @@ NDVI_CMAP = LinearSegmentedColormap.from_list(
 )
 
 DEFAULT_UPSAMPLING = "mean"
-DEFAULT_DOWNSAMPLING = "cubic"
+DEFAULT_DOWNSAMPLING = "lanczos"
 
 # GEOS-5 FP Variable Mappings
 # Load variable mappings from CSV file
