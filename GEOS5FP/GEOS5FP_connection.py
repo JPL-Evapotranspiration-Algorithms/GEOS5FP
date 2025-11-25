@@ -1804,6 +1804,11 @@ class GEOS5FPConnection:
                 f"({total_query_batches} query batches)..."
             )
             
+            # Initialize timing for ETA tracking
+            from time import time as current_time
+            query_start_time = current_time()
+            completed_batches = 0
+            
             # Initialize results dictionary indexed by original record index
             results_by_index = {i: {'time_UTC': t, 'geometry': g} 
                                for i, (t, g) in enumerate(zip(parsed_times, geometries))}
@@ -1904,12 +1909,43 @@ class GEOS5FPConnection:
                         time_range_start = min_time - timedelta(hours=2)
                         time_range_end = max_time + timedelta(hours=2)
                         
-                        logger.info(
-                            f"    Batch {batch_num}/{total_query_batches}: "
-                            f"cluster {cluster_idx}/{len(time_clusters)} - "
-                            f"{len(cluster)} records, {time_span_days:.1f} days "
-                            f"({min_time.date()} to {max_time.date()})"
-                        )
+                        # Calculate and display ETA
+                        elapsed_time = current_time() - query_start_time
+                        if completed_batches > 0:
+                            avg_time_per_batch = elapsed_time / completed_batches
+                            remaining_batches = total_query_batches - completed_batches
+                            eta_seconds = avg_time_per_batch * remaining_batches
+                            
+                            # Format time as human-readable
+                            if eta_seconds < 60:
+                                eta_str = f"{eta_seconds:.0f}s"
+                            elif eta_seconds < 3600:
+                                eta_str = f"{eta_seconds/60:.1f}m"
+                            else:
+                                eta_str = f"{eta_seconds/3600:.1f}h"
+                            
+                            # Format elapsed time
+                            if elapsed_time < 60:
+                                elapsed_str = f"{elapsed_time:.0f}s"
+                            elif elapsed_time < 3600:
+                                elapsed_str = f"{elapsed_time/60:.1f}m"
+                            else:
+                                elapsed_str = f"{elapsed_time/3600:.1f}h"
+                            
+                            logger.info(
+                                f"    Batch {batch_num}/{total_query_batches}: "
+                                f"cluster {cluster_idx}/{len(time_clusters)} - "
+                                f"{len(cluster)} records, {time_span_days:.1f} days "
+                                f"({min_time.date()} to {max_time.date()}) - "
+                                f"Elapsed: {elapsed_str}, ETA: {eta_str}"
+                            )
+                        else:
+                            logger.info(
+                                f"    Batch {batch_num}/{total_query_batches}: "
+                                f"cluster {cluster_idx}/{len(time_clusters)} - "
+                                f"{len(cluster)} records, {time_span_days:.1f} days "
+                                f"({min_time.date()} to {max_time.date()})"
+                            )
                         
                         try:
                             # Query all variables for this dataset in a single request
@@ -1960,6 +1996,9 @@ class GEOS5FPConnection:
                                         if var_name in VARIABLE_TRANSFORMATIONS:
                                             value = VARIABLE_TRANSFORMATIONS[var_name](value)
                                         results_by_index[record['index']][var_name] = value
+                            
+                            # Update completed batches counter for ETA
+                            completed_batches += 1
                         
                         except Exception as e:
                             logger.warning(
@@ -1969,6 +2008,9 @@ class GEOS5FPConnection:
                             for record in cluster:
                                 for var_name in var_names_in_dataset:
                                     results_by_index[record['index']][var_name] = None
+                            
+                            # Update completed batches counter even for failures
+                            completed_batches += 1
             
             # Convert results dictionary to list in original order
             all_dfs = [results_by_index[i] for i in range(len(parsed_times))]
@@ -2117,9 +2159,45 @@ class GEOS5FPConnection:
                     f"for time range {time_range[0]} to {time_range[1]}"
                 )
                 
+                # Initialize timing for ETA tracking
+                from time import time as current_time
+                query_start_time = current_time()
+                total_points = len(points)
+                completed_points = 0
+                
                 # Query each point for this variable
                 dfs = []
-                for pt_lat, pt_lon in points:
+                for point_idx, (pt_lat, pt_lon) in enumerate(points, 1):
+                    # Calculate and display ETA
+                    if completed_points > 0:
+                        elapsed_time = current_time() - query_start_time
+                        avg_time_per_point = elapsed_time / completed_points
+                        remaining_points = total_points - completed_points
+                        eta_seconds = avg_time_per_point * remaining_points
+                        
+                        # Format time as human-readable
+                        if eta_seconds < 60:
+                            eta_str = f"{eta_seconds:.0f}s"
+                        elif eta_seconds < 3600:
+                            eta_str = f"{eta_seconds/60:.1f}m"
+                        else:
+                            eta_str = f"{eta_seconds/3600:.1f}h"
+                        
+                        # Format elapsed time
+                        if elapsed_time < 60:
+                            elapsed_str = f"{elapsed_time:.0f}s"
+                        elif elapsed_time < 3600:
+                            elapsed_str = f"{elapsed_time/60:.1f}m"
+                        else:
+                            elapsed_str = f"{elapsed_time/3600:.1f}h"
+                        
+                        logger.info(
+                            f"  Point {point_idx}/{total_points} ({pt_lat:.4f}, {pt_lon:.4f}) - "
+                            f"Elapsed: {elapsed_str}, ETA: {eta_str}"
+                        )
+                    else:
+                        logger.info(f"  Point {point_idx}/{total_points} ({pt_lat:.4f}, {pt_lon:.4f})")
+                    
                     try:
                         result = query_geos5fp_point(
                             dataset=var_dataset,
@@ -2144,8 +2222,13 @@ class GEOS5FPConnection:
                         df_point['geometry'] = Point(pt_lon, pt_lat)
                         
                         dfs.append(df_point)
+                        
+                        # Update completed points counter for ETA
+                        completed_points += 1
                     except Exception as e:
                         logger.warning(f"Failed to query point ({pt_lat}, {pt_lon}) for {var_name}: {e}")
+                        # Update completed points counter even for failures
+                        completed_points += 1
                 
                 if not dfs:
                     logger.warning(f"No successful point queries for variable {var_name}")
@@ -2327,8 +2410,14 @@ class GEOS5FPConnection:
                 points = extract_points(geometry)
                 all_variable_dfs = []
                 
+                # Initialize timing for ETA tracking across all variables and points
+                from time import time as current_time
+                query_start_time = current_time()
+                total_queries = len(variable_names) * len(points)
+                completed_queries = 0
+                
                 # Process each variable
-                for var_name in variable_names:
+                for var_idx, var_name in enumerate(variable_names, 1):
                     # Determine dataset for this variable
                     var_dataset = dataset
                     if var_dataset is None:
@@ -2349,12 +2438,42 @@ class GEOS5FPConnection:
                     variable_opendap = raw_variable.lower()
                     
                     logger.info(
-                        f"retrieving {var_name} "
-                        f"from GEOS-5 FP {var_dataset} at point location(s)"
+                        f"retrieving {var_name} ({var_idx}/{len(variable_names)}) "
+                        f"from GEOS-5 FP {var_dataset} at {len(points)} point location(s)"
                     )
                     
                     dfs = []
-                    for pt_lat, pt_lon in points:
+                    for point_idx, (pt_lat, pt_lon) in enumerate(points, 1):
+                        # Calculate and display ETA
+                        if completed_queries > 0:
+                            elapsed_time = current_time() - query_start_time
+                            avg_time_per_query = elapsed_time / completed_queries
+                            remaining_queries = total_queries - completed_queries
+                            eta_seconds = avg_time_per_query * remaining_queries
+                            
+                            # Format time as human-readable
+                            if eta_seconds < 60:
+                                eta_str = f"{eta_seconds:.0f}s"
+                            elif eta_seconds < 3600:
+                                eta_str = f"{eta_seconds/60:.1f}m"
+                            else:
+                                eta_str = f"{eta_seconds/3600:.1f}h"
+                            
+                            # Format elapsed time
+                            if elapsed_time < 60:
+                                elapsed_str = f"{elapsed_time:.0f}s"
+                            elif elapsed_time < 3600:
+                                elapsed_str = f"{elapsed_time/60:.1f}m"
+                            else:
+                                elapsed_str = f"{elapsed_time/3600:.1f}h"
+                            
+                            logger.info(
+                                f"  Point {point_idx}/{len(points)} ({pt_lat:.4f}, {pt_lon:.4f}) - "
+                                f"Elapsed: {elapsed_str}, ETA: {eta_str}"
+                            )
+                        else:
+                            logger.info(f"  Point {point_idx}/{len(points)} ({pt_lat:.4f}, {pt_lon:.4f})")
+                        
                         try:
                             # Query time window around target time
                             # Larger window for interpolation to ensure we get before/after samples
@@ -2434,8 +2553,13 @@ class GEOS5FPConnection:
                             df_point['geometry'] = Point(pt_lon, pt_lat)
                             
                             dfs.append(df_point)
+                            
+                            # Update completed queries counter for ETA
+                            completed_queries += 1
                         except Exception as e:
                             logger.warning(f"Failed to query point ({pt_lat}, {pt_lon}) for {var_name}: {e}")
+                            # Update completed queries counter even for failures
+                            completed_queries += 1
                     
                     if not dfs:
                         logger.warning(f"No successful point queries for variable {var_name}")
