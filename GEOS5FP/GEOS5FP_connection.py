@@ -1,8 +1,6 @@
 import json
 import logging
 import os
-import ssl
-import warnings
 from datetime import date, datetime, timedelta, time
 from os import makedirs
 from os.path import expanduser, exists, getsize
@@ -18,92 +16,10 @@ import rasterio
 import rasters as rt
 import requests
 from requests.exceptions import ChunkedEncodingError, ConnectionError, SSLError
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-from urllib3.util.ssl_ import create_urllib3_context
 from tqdm.notebook import tqdm
 
 from dateutil import parser
 
-
-def create_robust_session(ssl_context=None):
-    """Create robust session with SSL error handling and retry strategy."""
-    session = requests.Session()
-    retry_strategy = Retry(
-        total=2,
-        status_forcelist=[429, 500, 502, 503, 504],
-        backoff_factor=1,
-        allowed_methods=["HEAD", "GET", "OPTIONS"]
-    )
-    adapter = HTTPAdapter(max_retries=retry_strategy)
-    
-    # Configure SSL context if provided
-    if ssl_context:
-        adapter.init_poolmanager(
-            ssl_context=ssl_context,
-            socket_options=HTTPAdapter.DEFAULT_SOCKET_OPTIONS
-        )
-    
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    return session
-
-
-def create_legacy_ssl_context():
-    """Create a legacy SSL context that's more permissive for older servers."""
-    context = create_urllib3_context()
-    context.set_ciphers('DEFAULT@SECLEVEL=1')
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    # Allow legacy renegotiation
-    context.options &= ~ssl.OP_NO_RENEGOTIATION
-    return context
-
-
-def make_head_request_with_ssl_fallback(url, timeout=30):
-    """Make HEAD request with SSL error handling and multiple fallback strategies."""
-    logger = logging.getLogger(__name__)
-    
-    # Strategy 1: Default SSL settings
-    try:
-        logger.debug(f"attempting HEAD request with default SSL: {url}")
-        session = create_robust_session()
-        return session.head(url, timeout=timeout, verify=True)
-    except SSLError as e:
-        logger.warning(f"SSL error with default settings: {e}")
-        
-        # Strategy 2: Legacy SSL context with reduced security
-        try:
-            logger.warning(f"retrying HEAD request with legacy SSL context: {url}")
-            legacy_context = create_legacy_ssl_context()
-            session = create_robust_session(ssl_context=legacy_context)
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                return session.head(url, timeout=timeout, verify=False)
-        except SSLError as fallback_e:
-            logger.warning(f"Legacy SSL context failed: {fallback_e}")
-            
-            # Strategy 3: Minimal SSL with shorter timeout
-            try:
-                logger.warning(f"retrying HEAD request with minimal SSL and shorter timeout: {url}")
-                session = requests.Session()
-                # Disable retries for this attempt to fail faster
-                adapter = HTTPAdapter(max_retries=0)
-                session.mount("https://", adapter)
-                session.mount("http://", adapter)
-                
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    return session.head(url, timeout=10, verify=False)
-            except Exception as final_e:
-                logger.error(f"All SSL fallback strategies failed. Final error: {final_e}")
-                raise SSLError(f"Failed to connect to {url} after trying multiple SSL strategies. Original error: {e}")
-        except Exception as fallback_e:
-            logger.error(f"HEAD request failed with legacy SSL context: {fallback_e}")
-            raise SSLError(f"Failed to connect to {url} due to SSL issues. Original error: {e}")
-    except Exception as e:
-        logger.error(f"HEAD request failed: {e}")
-        raise
 from rasters import Raster, RasterGeometry
 from shapely.geometry import Point, MultiPoint
 
@@ -113,6 +29,9 @@ from .HTTP_listing import HTTP_listing
 from .GEOS5FP_granule import GEOS5FPGranule
 from .timer import Timer
 from .downscaling import linear_downscale, bias_correct
+from .create_robust_session import create_robust_session
+from .create_legacy_ssl_context import create_legacy_ssl_context
+from .make_head_request_with_ssl_fallback import make_head_request_with_ssl_fallback
 from .download_file import download_file
 from .get_variable_info import get_variable_info
 from .geometry_utils import is_point_geometry, extract_points
