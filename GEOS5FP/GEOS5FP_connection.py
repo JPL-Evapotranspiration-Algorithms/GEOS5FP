@@ -464,7 +464,7 @@ class GEOS5FPConnection:
             expected_hours: List[float] = None,
             timeout: float = None,
             retries: int = None,
-            use_http_listing: bool = DEFAULT_USE_HTTP_LISTING) -> Tuple[datetime, Raster, datetime, Raster]:
+            use_http_listing: bool = DEFAULT_USE_HTTP_LISTING) -> Tuple[GEOS5FPGranule, GEOS5FPGranule]:
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
 
@@ -1014,7 +1014,6 @@ class GEOS5FPConnection:
             )
 
             if water is not None:
-                # Ta_K_smooth = self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling="linear")
                 Ta_K_water = linear_downscale(
                     coarse_image=Ta_K_coarse,
                     fine_image=ST_K_water,
@@ -1267,7 +1266,7 @@ class GEOS5FPConnection:
                     RH_water = 1 - RH_complement_water
                     RH = rt.where(water, RH_water, RH)
                 else:
-                    RH_smooth = self.RH(time_UTC=time_UTC, geometry=geometry, resampling="linear")
+                    RH_smooth = self.RH(time_UTC=time_UTC, geometry=geometry, resampling="lanczos")
                     RH = rt.where(water, RH_smooth, RH)
 
         RH = rt.clip(RH, 0, 1)

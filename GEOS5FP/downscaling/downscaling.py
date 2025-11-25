@@ -28,8 +28,8 @@ def bias_correct(
 def linear_downscale(
         coarse_image: Raster,
         fine_image: Raster,
-        upsampling: str = "average",
-        downsampling: str = "linear",
+        upsampling: str = DEFAULT_UPSAMPLING,
+        downsampling: str = DEFAULT_DOWNSAMPLING,
         use_gap_filling: bool = False,
         apply_scale: bool = True,
         apply_bias: bool = True,
@@ -158,7 +158,7 @@ def downscale_soil_moisture(
         water: Raster,
         fvlim=0.5,
         a=0.5,
-        smoothing="linear") -> Raster:
+        smoothing=DEFAULT_DOWNSAMPLING) -> Raster:
     fine = fine_geometry
     ST_fine = ST_fine.mask(~water)
     NDVI_fine = NDVI_fine.mask(~water)
