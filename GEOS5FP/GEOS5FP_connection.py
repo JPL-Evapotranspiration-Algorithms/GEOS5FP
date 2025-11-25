@@ -1906,43 +1906,8 @@ class GEOS5FPConnection:
                     'geometry': geom
                 })
             
-            # Function to cluster times at a coordinate to avoid long queries
-            def cluster_times(records, max_days_per_query=30):
-                """
-                Cluster records by time to keep queries under max_days_per_query duration.
-                Returns list of record clusters.
-                """
-                if not records:
-                    return []
-                
-                # Sort by time
-                sorted_records = sorted(records, key=lambda r: r['time'])
-                
-                clusters = []
-                current_cluster = [sorted_records[0]]
-                
-                for record in sorted_records[1:]:
-                    cluster_start = current_cluster[0]['time']
-                    cluster_end = current_cluster[-1]['time']
-                    record_time = record['time']
-                    
-                    # Check if adding this record would exceed max duration
-                    potential_span = (max(cluster_end, record_time) - 
-                                    min(cluster_start, record_time))
-                    
-                    if potential_span.total_seconds() / 86400 <= max_days_per_query:
-                        # Add to current cluster
-                        current_cluster.append(record)
-                    else:
-                        # Start new cluster
-                        clusters.append(current_cluster)
-                        current_cluster = [record]
-                
-                # Add final cluster
-                if current_cluster:
-                    clusters.append(current_cluster)
-                
-                return clusters
+            # Import cluster_times utility
+            from GEOS5FP.cluster_times import cluster_times
             
             # Count total queries needed
             total_query_batches = 0
