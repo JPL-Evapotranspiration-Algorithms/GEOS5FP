@@ -1848,7 +1848,7 @@ class GEOS5FPConnection:
             # Count total queries needed
             total_query_batches = 0
             for coord_key, records in coord_to_records.items():
-                clusters = cluster_times(records, max_days_per_query=30)
+                clusters = cluster_times(records, max_days_per_query=7)
                 total_query_batches += len(clusters)
             
             if verbose:
@@ -1869,7 +1869,9 @@ class GEOS5FPConnection:
                 pbar = tqdm(
                     total=total_query_batches,
                     desc=f"Querying {len(coord_to_records)} locations",
-                    unit="batch"
+                    unit="batch",
+                    mininterval=0.5,
+                    smoothing=0.1
                 )
             
             # Initialize results dictionary indexed by original record index
@@ -1951,7 +1953,7 @@ class GEOS5FPConnection:
                     pt_lat, pt_lon = coord_key
                     
                     # Cluster times to keep queries manageable
-                    time_clusters = cluster_times(records, max_days_per_query=30)
+                    time_clusters = cluster_times(records, max_days_per_query=7)
                     
                     if verbose:
                         logger.info(
@@ -2012,6 +2014,14 @@ class GEOS5FPConnection:
                                     f"{len(cluster)} records, {time_span_days:.1f} days "
                                     f"({min_time.date()} to {max_time.date()})"
                                 )
+                        
+                        # Update progress bar description to show current batch
+                        if pbar is not None:
+                            pbar.set_description(
+                                f"Querying batch {batch_num}/{total_query_batches} "
+                                f"({pt_lat:.2f}, {pt_lon:.2f})"
+                            )
+                            pbar.refresh()
                         
                         try:
                             # Query all variables for this dataset in a single request
