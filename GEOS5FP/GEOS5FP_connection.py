@@ -750,9 +750,19 @@ class GEOS5FPConnection:
             # Rename from OPeNDAP variable name to our standard variable name
             result_df = result_df.rename(columns={variable_opendap: variable_name})
             
+            # Apply transformation if defined for this variable
+            if variable_name in VARIABLE_TRANSFORMATIONS:
+                result_df[variable_name] = result_df[variable_name].apply(VARIABLE_TRANSFORMATIONS[variable_name])
+            
             # Apply clipping if specified
             if clip_min is not None or clip_max is not None:
                 result_df[variable_name] = result_df[variable_name].clip(lower=clip_min, upper=clip_max)
+            
+            # Ensure geometry column is at the end if present
+            if 'geometry' in result_df.columns:
+                cols = [c for c in result_df.columns if c != 'geometry']
+                cols.append('geometry')
+                result_df = result_df[cols]
             
             return result_df
         
@@ -1917,8 +1927,29 @@ class GEOS5FPConnection:
             # Group variables by dataset for efficient multi-variable queries
             from collections import defaultdict
             dataset_to_variables = defaultdict(list)
+            computed_variables = []  # Track computed variables separately
+            
+            # Map computed variables to their dependencies
+            computed_dependencies = {
+                'RH': ['Q', 'PS', 'Ta'],  # Need these to compute RH
+                'Ta_C': ['Ta'],  # Need Ta to convert to Celsius
+            }
             
             for var_name in variable_names:
+                # Check if this is a computed variable
+                if var_name in COMPUTED_VARIABLES:
+                    computed_variables.append(var_name)
+                    # Add dependencies to query list if not already present
+                    if var_name in computed_dependencies:
+                        for dep in computed_dependencies[var_name]:
+                            if dep not in variable_names and dep not in [v[0] for v in sum(dataset_to_variables.values(), [])]:
+                                # Add dependency variable
+                                if dep in GEOS5FP_VARIABLES:
+                                    _, dep_dataset, dep_raw_variable = self._get_variable_info(dep)
+                                    dep_opendap = dep_raw_variable.lower()
+                                    dataset_to_variables[dep_dataset].append((dep, dep_opendap))
+                    continue
+                
                 # Determine dataset for this variable
                 var_dataset = dataset
                 if var_dataset is None:
@@ -1927,7 +1958,8 @@ class GEOS5FPConnection:
                     else:
                         raise ValueError(
                             f"Dataset must be specified when using raw variable name '{var_name}'. "
-                            f"Known variables: {list(GEOS5FP_VARIABLES.keys())}"
+                            f"Known variables: {list(GEOS5FP_VARIABLES.keys())}. "
+                            f"Computed variables: {list(COMPUTED_VARIABLES)}"
                         )
                 else:
                     # Use provided dataset, determine variable
@@ -2040,6 +2072,9 @@ class GEOS5FPConnection:
                                     # Extract all variables
                                     for var_name, var_opendap in zip(var_names_in_dataset, var_opendap_names):
                                         value = result.df.iloc[closest_idx][var_opendap]
+                                        # Apply transformation if defined for this variable
+                                        if var_name in VARIABLE_TRANSFORMATIONS:
+                                            value = VARIABLE_TRANSFORMATIONS[var_name](value)
                                         results_by_index[record['index']][var_name] = value
                         
                         except Exception as e:
@@ -2068,6 +2103,61 @@ class GEOS5FPConnection:
             
             # Convert to GeoDataFrame
             result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
+            
+            # Compute derived/computed variables
+            if computed_variables:
+                logger.info(f"Computing derived variables: {', '.join(computed_variables)}")
+                for var_name in computed_variables:
+                    try:
+                        # Call the appropriate method for each computed variable
+                        if var_name == 'RH':
+                            # Compute RH from Q, PS, and Ta (for SVP)
+                            if 'Q' in result_gdf.columns and 'PS' in result_gdf.columns and 'Ta' in result_gdf.columns:
+                                import numpy as np
+                                Q = result_gdf['Q'].values
+                                PS = result_gdf['PS'].values
+                                Ta_K = result_gdf['Ta'].values
+                                
+                                # Calculate SVP from temperature (Magnus formula)
+                                Ta_C = Ta_K - 273.15
+                                SVP_Pa = 611.2 * np.exp((17.67 * Ta_C) / (Ta_C + 243.5))
+                                
+                                # Calculate RH from specific humidity
+                                Mw = 18.015268  # g / mol
+                                Md = 28.96546e-3  # kg / mol
+                                epsilon = Mw / (Md * 1000)
+                                w = Q / (1 - Q)
+                                ws = epsilon * SVP_Pa / (PS - SVP_Pa)
+                                RH = np.clip(w / ws, 0, 1)
+                                
+                                result_gdf['RH'] = RH
+                            else:
+                                logger.warning("Cannot compute RH: missing required variables (Q, PS, Ta)")
+                                result_gdf['RH'] = None
+                                
+                        elif var_name == 'Ta_C':
+                            # Convert Ta from Kelvin to Celsius
+                            if 'Ta' in result_gdf.columns:
+                                result_gdf['Ta_C'] = result_gdf['Ta'] - 273.15
+                            else:
+                                logger.warning("Cannot compute Ta_C: missing Ta")
+                                result_gdf['Ta_C'] = None
+                        # Add more computed variables as needed
+                    except Exception as e:
+                        logger.warning(f"Failed to compute {var_name}: {e}")
+                        result_gdf[var_name] = None
+                
+                # Remove dependency columns that weren't originally requested
+                cols_to_keep = ['geometry'] + variable_names
+                cols_to_drop = [col for col in result_gdf.columns if col not in cols_to_keep]
+                if cols_to_drop:
+                    result_gdf = result_gdf.drop(columns=cols_to_drop)
+            
+            # Ensure geometry column is at the end
+            if 'geometry' in result_gdf.columns:
+                cols = [c for c in result_gdf.columns if c != 'geometry']
+                cols.append('geometry')
+                result_gdf = result_gdf[cols]
             
             return result_gdf
         
@@ -2274,6 +2364,9 @@ class GEOS5FPConnection:
                                 
                                 if variable_opendap in df_point.columns:
                                     df_point = df_point.rename(columns={variable_opendap: var_name})
+                                    # Apply transformation if defined for this variable
+                                    if var_name in VARIABLE_TRANSFORMATIONS:
+                                        df_point[var_name] = df_point[var_name].apply(VARIABLE_TRANSFORMATIONS[var_name])
                                 
                                 # Add geometry column at the end
                                 df_point['geometry'] = Point(pt_lon, pt_lat)
@@ -2287,8 +2380,14 @@ class GEOS5FPConnection:
                         
                         result_df = pd.concat(dfs, ignore_index=False)
                         result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
+                        
+                        # Ensure geometry column is at the end
+                        if 'geometry' in result_gdf.columns:
+                            cols = [c for c in result_gdf.columns if c != 'geometry']
+                            cols.append('geometry')
+                            result_gdf = result_gdf[cols]
+                        
                         return result_gdf
-                    
                     # Raster query
                     else:
                         logger.info(
@@ -2431,6 +2530,9 @@ class GEOS5FPConnection:
                             
                             if variable_opendap in df_point.columns:
                                 df_point = df_point.rename(columns={variable_opendap: var_name})
+                                # Apply transformation if defined for this variable
+                                if var_name in VARIABLE_TRANSFORMATIONS:
+                                    df_point[var_name] = df_point[var_name].apply(VARIABLE_TRANSFORMATIONS[var_name])
                             
                             # Add geometry column at the end
                             df_point['geometry'] = Point(pt_lon, pt_lat)

@@ -17,6 +17,7 @@ dependencies = [
     "affine",
     "beautifulsoup4",
     "colored-logging",
+    "ECOv002-calval-tables>=1.11.0",
     "geopandas",
     "matplotlib",
     "netcdf4",
