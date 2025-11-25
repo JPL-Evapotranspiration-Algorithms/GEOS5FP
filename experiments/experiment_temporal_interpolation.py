@@ -16,7 +16,7 @@ lon = -76.656
 print("Testing multi-variable query with temporal_interpolation='interpolate'")
 print("=" * 70)
 try:
-    result = conn.variable(
+    result = conn.query(
         ["COT", "AOT", "vapor_gccm", "ozone_cm"],
         time_UTC=time_utc,
         lat=lat,
@@ -44,7 +44,7 @@ print("\n" + "=" * 70)
 print("Testing multi-variable query with temporal_interpolation='nearest'")
 print("=" * 70)
 try:
-    result = conn.variable(
+    result = conn.query(
         ["COT", "AOT", "vapor_gccm", "ozone_cm"],
         time_UTC=time_utc,
         lat=lat,

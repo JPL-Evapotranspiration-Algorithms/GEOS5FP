@@ -1,8 +1,6 @@
 import json
 import logging
 import os
-import ssl
-import warnings
 from datetime import date, datetime, timedelta, time
 from os import makedirs
 from os.path import expanduser, exists, getsize
@@ -18,92 +16,10 @@ import rasterio
 import rasters as rt
 import requests
 from requests.exceptions import ChunkedEncodingError, ConnectionError, SSLError
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-from urllib3.util.ssl_ import create_urllib3_context
 from tqdm.notebook import tqdm
 
 from dateutil import parser
 
-
-def create_robust_session(ssl_context=None):
-    """Create robust session with SSL error handling and retry strategy."""
-    session = requests.Session()
-    retry_strategy = Retry(
-        total=2,
-        status_forcelist=[429, 500, 502, 503, 504],
-        backoff_factor=1,
-        allowed_methods=["HEAD", "GET", "OPTIONS"]
-    )
-    adapter = HTTPAdapter(max_retries=retry_strategy)
-    
-    # Configure SSL context if provided
-    if ssl_context:
-        adapter.init_poolmanager(
-            ssl_context=ssl_context,
-            socket_options=HTTPAdapter.DEFAULT_SOCKET_OPTIONS
-        )
-    
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    return session
-
-
-def create_legacy_ssl_context():
-    """Create a legacy SSL context that's more permissive for older servers."""
-    context = create_urllib3_context()
-    context.set_ciphers('DEFAULT@SECLEVEL=1')
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    # Allow legacy renegotiation
-    context.options &= ~ssl.OP_NO_RENEGOTIATION
-    return context
-
-
-def make_head_request_with_ssl_fallback(url, timeout=30):
-    """Make HEAD request with SSL error handling and multiple fallback strategies."""
-    logger = logging.getLogger(__name__)
-    
-    # Strategy 1: Default SSL settings
-    try:
-        logger.debug(f"attempting HEAD request with default SSL: {url}")
-        session = create_robust_session()
-        return session.head(url, timeout=timeout, verify=True)
-    except SSLError as e:
-        logger.warning(f"SSL error with default settings: {e}")
-        
-        # Strategy 2: Legacy SSL context with reduced security
-        try:
-            logger.warning(f"retrying HEAD request with legacy SSL context: {url}")
-            legacy_context = create_legacy_ssl_context()
-            session = create_robust_session(ssl_context=legacy_context)
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                return session.head(url, timeout=timeout, verify=False)
-        except SSLError as fallback_e:
-            logger.warning(f"Legacy SSL context failed: {fallback_e}")
-            
-            # Strategy 3: Minimal SSL with shorter timeout
-            try:
-                logger.warning(f"retrying HEAD request with minimal SSL and shorter timeout: {url}")
-                session = requests.Session()
-                # Disable retries for this attempt to fail faster
-                adapter = HTTPAdapter(max_retries=0)
-                session.mount("https://", adapter)
-                session.mount("http://", adapter)
-                
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    return session.head(url, timeout=10, verify=False)
-            except Exception as final_e:
-                logger.error(f"All SSL fallback strategies failed. Final error: {final_e}")
-                raise SSLError(f"Failed to connect to {url} after trying multiple SSL strategies. Original error: {e}")
-        except Exception as fallback_e:
-            logger.error(f"HEAD request failed with legacy SSL context: {fallback_e}")
-            raise SSLError(f"Failed to connect to {url} due to SSL issues. Original error: {e}")
-    except Exception as e:
-        logger.error(f"HEAD request failed: {e}")
-        raise
 from rasters import Raster, RasterGeometry
 from shapely.geometry import Point, MultiPoint
 
@@ -113,7 +29,12 @@ from .HTTP_listing import HTTP_listing
 from .GEOS5FP_granule import GEOS5FPGranule
 from .timer import Timer
 from .downscaling import linear_downscale, bias_correct
+from .create_robust_session import create_robust_session
+from .create_legacy_ssl_context import create_legacy_ssl_context
+from .make_head_request_with_ssl_fallback import make_head_request_with_ssl_fallback
 from .download_file import download_file
+from .get_variable_info import get_variable_info
+from .geometry_utils import is_point_geometry, extract_points
 
 # Optional import for point queries via OPeNDAP
 try:
@@ -167,71 +88,6 @@ class GEOS5FPConnection:
 
         return display_string
 
-    def _get_variable_info(self, variable_name: str) -> Tuple[str, str, str]:
-        """
-        Look up variable metadata from constants.
-        
-        :param variable_name: The name of the variable to look up
-        :return: Tuple of (description, product, variable)
-        :raises KeyError: If variable_name is not found in GEOS5FP_VARIABLES
-        """
-        if variable_name not in GEOS5FP_VARIABLES:
-            raise KeyError(f"Variable '{variable_name}' not found in GEOS5FP_VARIABLES")
-        
-        return GEOS5FP_VARIABLES[variable_name]
-
-    def _is_point_geometry(self, geometry) -> bool:
-        """
-        Check if geometry is a point or multipoint.
-        
-        :param geometry: Geometry to check (can be shapely Point/MultiPoint or rasters Point/MultiPoint)
-        :return: True if point geometry, False otherwise
-        """
-        if geometry is None:
-            return False
-        
-        # Check shapely types
-        if isinstance(geometry, (Point, MultiPoint)):
-            return True
-        
-        # Check if it's a rasters geometry with point type
-        if hasattr(geometry, 'geometry') and isinstance(geometry.geometry, (Point, MultiPoint)):
-            return True
-        
-        # Check string representation
-        geom_type = str(type(geometry).__name__).lower()
-        if 'point' in geom_type:
-            return True
-            
-        return False
-
-    def _extract_points(self, geometry) -> List[Tuple[float, float]]:
-        """
-        Extract (lat, lon) coordinates from point geometry.
-        
-        :param geometry: Point or MultiPoint geometry
-        :return: List of (lat, lon) tuples
-        """
-        points = []
-        
-        # Handle rasters geometry wrapper
-        if hasattr(geometry, 'geometry'):
-            geom = geometry.geometry
-        else:
-            geom = geometry
-        
-        if isinstance(geom, Point):
-            # Single point: (lon, lat) in shapely
-            points.append((geom.y, geom.x))
-        elif isinstance(geom, MultiPoint):
-            # Multiple points
-            for pt in geom.geoms:
-                points.append((pt.y, pt.x))
-        else:
-            raise ValueError(f"Unsupported geometry type for point extraction: {type(geom)}")
-        
-        return points
-
     def _check_remote(self):
         logger.info(f"checking URL: {cl.URL(self.remote)}")
         response = requests.head(self.remote)
@@ -246,7 +102,7 @@ class GEOS5FPConnection:
 
     @property
     def years_available(self) -> List[date]:
-        listing = self.list_URL(self.remote)
+        listing = self.list_remote_directory(self.remote)
         dates = sorted([date(int(item[1:]), 1, 1) for item in listing if item.startswith("Y")])
 
         return dates
@@ -263,7 +119,7 @@ class GEOS5FPConnection:
         if requests.head(year_URL).status_code == 404:
             raise GEOS5FPYearNotAvailable(f"GEOS-5 FP year not available: {year_URL}")
 
-        listing = self.list_URL(year_URL)
+        listing = self.list_remote_directory(year_URL)
         dates = sorted([date(year, int(item[1:]), 1) for item in listing if item.startswith("M")])
 
         return dates
@@ -280,7 +136,7 @@ class GEOS5FPConnection:
         if requests.head(month_URL).status_code == 404:
             raise GEOS5FPMonthNotAvailable(f"GEOS-5 FP month not available: {month_URL}")
 
-        listing = self.list_URL(month_URL)
+        listing = self.list_remote_directory(month_URL)
         dates = sorted([date(year, month, int(item[1:])) for item in listing if item.startswith("D")])
 
         return dates
@@ -329,7 +185,7 @@ class GEOS5FPConnection:
             retries -= 1
 
             try:
-                return self.http_listing(self.latest_date_available).sort_values(by="time_UTC").iloc[-1].time_UTC.to_pydatetime()
+                return self.list_GEOS5FP_granules(self.latest_date_available).sort_values(by="time_UTC").iloc[-1].time_UTC.to_pydatetime()
             except Exception as e:
                 logger.warning(e)
                 sleep(wait_seconds)
@@ -339,7 +195,8 @@ class GEOS5FPConnection:
     def time_from_URL(self, URL: str) -> datetime:
         return datetime.strptime(URL.split(".")[-3], "%Y%m%d_%H%M")
 
-    def list_URL(self, URL: str, timeout: float = None, retries: int = None) -> List[str]:
+    def list_remote_directory(self, URL: str, timeout: float = None, retries: int = None) -> List[str]:
+        """Fetch and cache the contents of a remote directory."""
         if URL in self._listings:
             return self._listings[URL]
         else:
@@ -348,12 +205,13 @@ class GEOS5FPConnection:
 
             return listing
 
-    def http_listing(
+    def list_GEOS5FP_granules(
             self,
             date_UTC: Union[datetime, str],
             product_name: str = None,
             timeout: float = None,
             retries: int = None) -> pd.DataFrame:
+        """Get GEOS-5 FP granule metadata for a specific day."""
         if timeout is None:
             timeout = self.DEFAULT_TIMEOUT_SECONDS
 
@@ -367,7 +225,7 @@ class GEOS5FPConnection:
 
         logger.info(f"listing URL: {cl.URL(day_URL)}")
         # listing = HTTP_listing(day_URL, timeout=timeout, retries=retries)
-        listing = self.list_URL(day_URL, timeout=timeout, retries=retries)
+        listing = self.list_remote_directory(day_URL, timeout=timeout, retries=retries)
 
         if product_name is None:
             URLs = sorted([
@@ -443,7 +301,7 @@ class GEOS5FPConnection:
             retries: int = None,
             use_http_listing: bool = False) -> pd.DataFrame:
         if use_http_listing:
-            return self.http_listing(
+            return self.list_GEOS5FP_granules(
                 date_UTC=date_UTC,
                 product_name=product_name,
                 timeout=timeout,
@@ -606,7 +464,7 @@ class GEOS5FPConnection:
             expected_hours: List[float] = None,
             timeout: float = None,
             retries: int = None,
-            use_http_listing: bool = DEFAULT_USE_HTTP_LISTING) -> Tuple[datetime, Raster, datetime, Raster]:
+            use_http_listing: bool = DEFAULT_USE_HTTP_LISTING) -> Tuple[GEOS5FPGranule, GEOS5FPGranule]:
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
 
@@ -654,7 +512,7 @@ class GEOS5FPConnection:
 
         return before_granule, after_granule
 
-    def _get_simple_variable(
+    def variable(
             self,
             variable_name: str,
             time_UTC: Union[datetime, str],
@@ -669,29 +527,55 @@ class GEOS5FPConnection:
             clip_min: Any = None,
             clip_max: Any = None) -> Union[Raster, pd.DataFrame]:
         """
-        Generic method to retrieve a simple variable that requires only interpolation.
+        Retrieve a single predefined variable at a specific time.
         
-        :param variable_name: Name of the variable (must exist in GEOS5FP_VARIABLES)
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry (can be raster geometry or Point/MultiPoint for time-series)
-        :param resampling: optional sampling method for resampling to target geometry
-        :param interval: optional interval for product listing
-        :param expected_hours: optional expected hours for product listing
-        :param min_value: minimum value for interpolation
-        :param max_value: maximum value for interpolation
-        :param exclude_values: values to exclude in interpolation
-        :param cmap: colormap for the result
-        :param clip_min: minimum value for final clipping (applied after interpolation)
-        :param clip_max: maximum value for final clipping (applied after interpolation)
-        :return: raster of the requested variable or DataFrame for point queries or DataFrame for point queries
+        This is a convenience method for retrieving individual variables from the
+        GEOS5FP_VARIABLES registry. For more advanced queries including multiple
+        variables, time ranges, or batch queries, use the query() method instead.
+        
+        Parameters
+        ----------
+        variable_name : str
+            Name of the variable (must exist in GEOS5FP_VARIABLES)
+        time_UTC : datetime or str
+            Date/time in UTC
+        geometry : RasterGeometry or Point or MultiPoint, optional
+            Target geometry (can be raster geometry or Point/MultiPoint for time-series)
+        resampling : str, optional
+            Sampling method for resampling to target geometry
+        interval : int, optional
+            Interval for product listing
+        expected_hours : list of float, optional
+            Expected hours for product listing
+        min_value : Any, optional
+            Minimum value for interpolation
+        max_value : Any, optional
+            Maximum value for interpolation
+        exclude_values : optional
+            Values to exclude in interpolation
+        cmap : optional
+            Colormap for the result
+        clip_min : Any, optional
+            Minimum value for final clipping (applied after interpolation)
+        clip_max : Any, optional
+            Maximum value for final clipping (applied after interpolation)
+        
+        Returns
+        -------
+        Raster or DataFrame
+            Raster of the requested variable or DataFrame for point queries
+        
+        See Also
+        --------
+        query : More flexible query method supporting multiple variables and time ranges
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
             
-        NAME, PRODUCT, VARIABLE = self._get_variable_info(variable_name)
+        NAME, PRODUCT, VARIABLE = get_variable_info(variable_name)
         
         # Check if this is a point query
-        if self._is_point_geometry(geometry):
+        if is_point_geometry(geometry):
             if not HAS_OPENDAP_SUPPORT:
                 raise ImportError(
                     "Point query support requires xarray and netCDF4. "
@@ -704,7 +588,7 @@ class GEOS5FPConnection:
                 "at point location(s)"
             )
             
-            points = self._extract_points(geometry)
+            points = extract_points(geometry)
             dfs = []
             
             # OPeNDAP uses lowercase variable names
@@ -750,9 +634,19 @@ class GEOS5FPConnection:
             # Rename from OPeNDAP variable name to our standard variable name
             result_df = result_df.rename(columns={variable_opendap: variable_name})
             
+            # Apply transformation if defined for this variable
+            if variable_name in VARIABLE_TRANSFORMATIONS:
+                result_df[variable_name] = result_df[variable_name].apply(VARIABLE_TRANSFORMATIONS[variable_name])
+            
             # Apply clipping if specified
             if clip_min is not None or clip_max is not None:
                 result_df[variable_name] = result_df[variable_name].clip(lower=clip_min, upper=clip_max)
+            
+            # Ensure geometry column is at the end if present
+            if 'geometry' in result_df.columns:
+                cols = [c for c in result_df.columns if c != 'geometry']
+                cols.append('geometry')
+                result_df = result_df[cols]
             
             return result_df
         
@@ -878,7 +772,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "SFMC",
             time_UTC,
             geometry=geometry,
@@ -900,7 +794,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of LAI or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "LAI",
             time_UTC,
             geometry=geometry,
@@ -934,7 +828,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "LHLAND",
             time_UTC,
             geometry=geometry,
@@ -951,7 +845,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "EFLUX",
             time_UTC,
             geometry=geometry,
@@ -967,7 +861,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "PARDR",
             time_UTC,
             geometry=geometry,
@@ -983,7 +877,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "PARDF",
             time_UTC,
             geometry=geometry,
@@ -1002,7 +896,7 @@ class GEOS5FPConnection:
         # 1:30, 4:30, 7:30, 10:30, 13:30, 16:30, 19:30, 22:30 UTC
         EXPECTED_HOURS = [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
         
-        return self._get_simple_variable(
+        return self.variable(
             "AOT",
             time_UTC,
             geometry=geometry,
@@ -1018,7 +912,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of COT or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "COT",
             time_UTC,
             geometry=geometry,
@@ -1037,7 +931,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of Ta or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "Ts_K",
             time_UTC,
             geometry=geometry,
@@ -1069,15 +963,15 @@ class GEOS5FPConnection:
             time_UTC = parser.parse(time_UTC)
         
         # If point geometry and no downscaling requested, use simple variable retrieval
-        if self._is_point_geometry(geometry) and ST_K is None:
-            return self._get_simple_variable(
+        if is_point_geometry(geometry) and ST_K is None:
+            return self.variable(
                 "Ta_K",
                 time_UTC,
                 geometry=geometry,
                 resampling=resampling
             )
         
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("Ta_K")
+        NAME, PRODUCT, VARIABLE = get_variable_info("Ta_K")
 
         logger.info(
             f"retrieving {cl.name(NAME)} "
@@ -1120,7 +1014,6 @@ class GEOS5FPConnection:
             )
 
             if water is not None:
-                # Ta_K_smooth = self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=geometry, resampling="linear")
                 Ta_K_water = linear_downscale(
                     coarse_image=Ta_K_coarse,
                     fine_image=ST_K_water,
@@ -1145,7 +1038,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of Ta or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "Tmin_K",
             time_UTC,
             geometry=geometry,
@@ -1172,7 +1065,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of surface pressure or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "PS",
             time_UTC,
             geometry=geometry,
@@ -1187,7 +1080,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of Q or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "Q",
             time_UTC,
             geometry=geometry,
@@ -1373,7 +1266,7 @@ class GEOS5FPConnection:
                     RH_water = 1 - RH_complement_water
                     RH = rt.where(water, RH_water, RH)
                 else:
-                    RH_smooth = self.RH(time_UTC=time_UTC, geometry=geometry, resampling="linear")
+                    RH_smooth = self.RH(time_UTC=time_UTC, geometry=geometry, resampling="lanczos")
                     RH = rt.where(water, RH_smooth, RH)
 
         RH = rt.clip(RH, 0, 1)
@@ -1394,7 +1287,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm or DataFrame for point queries or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "vapor_kgsqm",
             time_UTC,
             geometry=geometry,
@@ -1420,7 +1313,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "ozone_dobson",
             time_UTC,
             geometry=geometry,
@@ -1446,7 +1339,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "U2M",
             time_UTC,
             geometry=geometry,
@@ -1461,7 +1354,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "V2M",
             time_UTC,
             geometry=geometry,
@@ -1479,7 +1372,7 @@ class GEOS5FPConnection:
         # 1:30, 4:30, 7:30, 10:30, 13:30, 16:30, 19:30, 22:30 UTC
         EXPECTED_HOURS = [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
         
-        return self._get_simple_variable(
+        return self.variable(
             "CO2SC",
             time_UTC,
             geometry=geometry,
@@ -1511,7 +1404,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of SWin or DataFrame for point queries or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "SWin",
             time_UTC,
             geometry=geometry,
@@ -1527,7 +1420,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of SWin or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "SWTDN",
             time_UTC,
             geometry=geometry,
@@ -1543,7 +1436,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "ALBVISDR",
             time_UTC,
             geometry=geometry,
@@ -1560,7 +1453,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "ALBVISDF",
             time_UTC,
             geometry=geometry,
@@ -1577,7 +1470,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "ALBNIRDF",
             time_UTC,
             geometry=geometry,
@@ -1594,7 +1487,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "ALBNIRDR",
             time_UTC,
             geometry=geometry,
@@ -1611,7 +1504,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "ALBEDO",
             time_UTC,
             geometry=geometry,
@@ -1620,9 +1513,10 @@ class GEOS5FPConnection:
             clip_max=1
         )
 
-    def variable(
+    def query(
             self,
-            variable_name: Union[str, List[str]],
+            target_variables: Union[str, List[str]] = None,
+            targets_df: Union[pd.DataFrame, gpd.GeoDataFrame] = None,
             time_UTC: Union[datetime, str, List[datetime], List[str], pd.Series] = None,
             time_range: Tuple[Union[datetime, str], Union[datetime, str]] = None,
             dataset: str = None,
@@ -1632,9 +1526,10 @@ class GEOS5FPConnection:
             lon: Union[float, List[float], pd.Series] = None,
             dropna: bool = True,
             temporal_interpolation: str = "nearest",
+            variable_name: Union[str, List[str]] = None,
             **kwargs) -> Union[Raster, gpd.GeoDataFrame]:
         """
-        General-purpose variable retrieval method that can query any variable from any dataset.
+        General-purpose query method that can retrieve any variable from any dataset.
         
         This method provides a flexible interface for retrieving GEOS-5 FP data, supporting both:
         - Raster queries (for spatial data over a region)
@@ -1643,7 +1538,7 @@ class GEOS5FPConnection:
         
         Parameters
         ----------
-        variable_name : str or list of str
+        target_variables : str or list of str
             Name(s) of the variable(s) to retrieve. Can be either:
             - A single variable name (str): "Ta_K", "SM", "SWin", etc.
             - A list of variable names (List[str]): ["Ta_K", "SM", "SWin"]
@@ -1651,6 +1546,11 @@ class GEOS5FPConnection:
             - A predefined variable name from GEOS5FP_VARIABLES (e.g., "Ta_K", "SM", "SWin")
             - A raw GEOS-5 FP variable name (e.g., "T2M", "SFMC", "SWGDN")
             When multiple variables are requested with point geometry, each variable becomes a column.
+        targets_df : DataFrame or GeoDataFrame, optional
+            Input table containing 'time_UTC' and 'geometry' columns. When provided,
+            the target variables will be queried for each row and added as new columns
+            to this table, which is then returned. This is useful for generating
+            validation tables or adding GEOS-5 FP data to existing datasets.
         time_UTC : datetime, str, list, or Series, optional
             Date/time in UTC. Can be:
             - Single datetime or str for raster queries or single point query
@@ -1697,7 +1597,7 @@ class GEOS5FPConnection:
         >>> conn = GEOS5FPConnection()
         >>> end_time = datetime(2024, 11, 15)
         >>> start_time = end_time - timedelta(days=7)
-        >>> df = conn.variable(
+        >>> df = conn.query(
         ...     "T2M",
         ...     time_range=(start_time, end_time),
         ...     dataset="tavg1_2d_slv_Nx",
@@ -1706,7 +1606,7 @@ class GEOS5FPConnection:
         ... )
         
         # Example 2: Multiple variables in point query
-        >>> df = conn.variable(
+        >>> df = conn.query(
         ...     ["T2M", "PS", "QV2M"],
         ...     time_range=(start_time, end_time),
         ...     dataset="tavg1_2d_slv_Nx",
@@ -1717,7 +1617,7 @@ class GEOS5FPConnection:
         # Example 3: Raster query at single time
         >>> from rasters import RasterGeometry
         >>> geometry = RasterGeometry.open("target_area.tif")
-        >>> raster = conn.variable(
+        >>> raster = conn.query(
         ...     "T2M",
         ...     time_UTC="2024-11-15 12:00:00",
         ...     dataset="tavg1_2d_slv_Nx",
@@ -1725,7 +1625,7 @@ class GEOS5FPConnection:
         ... )
         
         # Example 4: Use predefined variable name
-        >>> df = conn.variable(
+        >>> df = conn.query(
         ...     "Ta_K",
         ...     time_range=(start_time, end_time),
         ...     lat=34.05,
@@ -1733,11 +1633,22 @@ class GEOS5FPConnection:
         ... )
         
         # Example 5: Query multiple predefined variables
-        >>> df = conn.variable(
-        ...     ["Ta_K", "SM", "SWin"],
+        >>> df = conn.query(
+        ...     target_variables=["Ta_K", "SM", "SWin"],
         ...     time_range=(start_time, end_time),
         ...     lat=40.7,
         ...     lon=-74.0
+        ... )
+        
+        # Example 6: Generate table with target variables
+        >>> import geopandas as gpd
+        >>> targets = gpd.GeoDataFrame({
+        ...     'time_UTC': [datetime(2024, 11, 15, 12), datetime(2024, 11, 15, 13)],
+        ...     'geometry': [Point(-118.25, 34.05), Point(-74.0, 40.7)]
+        ... })
+        >>> result = conn.query(
+        ...     target_variables=["Ta_C", "RH"],
+        ...     targets_df=targets
         ... )
         
         Notes
@@ -1750,12 +1661,30 @@ class GEOS5FPConnection:
         - Multiple variables can only be queried simultaneously for point geometries
         - Raster queries only support single variables
         """
-        # Normalize variable_name to list
-        if isinstance(variable_name, str):
-            variable_names = [variable_name]
+        # Handle backward compatibility: variable_name is deprecated, use target_variables
+        if target_variables is None and variable_name is not None:
+            target_variables = variable_name
+        elif target_variables is None:
+            raise ValueError("target_variables parameter is required")
+        
+        # Handle targets_df parameter
+        if targets_df is not None:
+            # Validate targets_df has required columns
+            if 'time_UTC' not in targets_df.columns:
+                raise ValueError("targets_df must contain 'time_UTC' column")
+            if 'geometry' not in targets_df.columns:
+                raise ValueError("targets_df must contain 'geometry' column")
+            
+            # Extract time_UTC and geometry from targets_df
+            time_UTC = targets_df['time_UTC']
+            geometry = targets_df['geometry']
+        
+        # Normalize target_variables to list
+        if isinstance(target_variables, str):
+            variable_names = [target_variables]
             single_variable = True
         else:
-            variable_names = variable_name
+            variable_names = target_variables
             single_variable = False
         
         # Validate inputs
@@ -1860,43 +1789,8 @@ class GEOS5FPConnection:
                     'geometry': geom
                 })
             
-            # Function to cluster times at a coordinate to avoid long queries
-            def cluster_times(records, max_days_per_query=30):
-                """
-                Cluster records by time to keep queries under max_days_per_query duration.
-                Returns list of record clusters.
-                """
-                if not records:
-                    return []
-                
-                # Sort by time
-                sorted_records = sorted(records, key=lambda r: r['time'])
-                
-                clusters = []
-                current_cluster = [sorted_records[0]]
-                
-                for record in sorted_records[1:]:
-                    cluster_start = current_cluster[0]['time']
-                    cluster_end = current_cluster[-1]['time']
-                    record_time = record['time']
-                    
-                    # Check if adding this record would exceed max duration
-                    potential_span = (max(cluster_end, record_time) - 
-                                    min(cluster_start, record_time))
-                    
-                    if potential_span.total_seconds() / 86400 <= max_days_per_query:
-                        # Add to current cluster
-                        current_cluster.append(record)
-                    else:
-                        # Start new cluster
-                        clusters.append(current_cluster)
-                        current_cluster = [record]
-                
-                # Add final cluster
-                if current_cluster:
-                    clusters.append(current_cluster)
-                
-                return clusters
+            # Import cluster_times utility
+            from GEOS5FP.cluster_times import cluster_times
             
             # Count total queries needed
             total_query_batches = 0
@@ -1917,22 +1811,44 @@ class GEOS5FPConnection:
             # Group variables by dataset for efficient multi-variable queries
             from collections import defaultdict
             dataset_to_variables = defaultdict(list)
+            computed_variables = []  # Track computed variables separately
+            
+            # Map computed variables to their dependencies
+            computed_dependencies = {
+                'RH': ['Q', 'PS', 'Ta'],  # Need these to compute RH
+                'Ta_C': ['Ta'],  # Need Ta to convert to Celsius
+            }
             
             for var_name in variable_names:
+                # Check if this is a computed variable
+                if var_name in COMPUTED_VARIABLES:
+                    computed_variables.append(var_name)
+                    # Add dependencies to query list if not already present
+                    if var_name in computed_dependencies:
+                        for dep in computed_dependencies[var_name]:
+                            if dep not in variable_names and dep not in [v[0] for v in sum(dataset_to_variables.values(), [])]:
+                                # Add dependency variable
+                                if dep in GEOS5FP_VARIABLES:
+                                    _, dep_dataset, dep_raw_variable = get_variable_info(dep)
+                                    dep_opendap = dep_raw_variable.lower()
+                                    dataset_to_variables[dep_dataset].append((dep, dep_opendap))
+                    continue
+                
                 # Determine dataset for this variable
                 var_dataset = dataset
                 if var_dataset is None:
                     if var_name in GEOS5FP_VARIABLES:
-                        _, var_dataset, raw_variable = self._get_variable_info(var_name)
+                        _, var_dataset, raw_variable = get_variable_info(var_name)
                     else:
                         raise ValueError(
                             f"Dataset must be specified when using raw variable name '{var_name}'. "
-                            f"Known variables: {list(GEOS5FP_VARIABLES.keys())}"
+                            f"Known variables: {list(GEOS5FP_VARIABLES.keys())}. "
+                            f"Computed variables: {list(COMPUTED_VARIABLES)}"
                         )
                 else:
                     # Use provided dataset, determine variable
                     if var_name in GEOS5FP_VARIABLES:
-                        _, _, raw_variable = self._get_variable_info(var_name)
+                        _, _, raw_variable = get_variable_info(var_name)
                     else:
                         raw_variable = var_name
                 
@@ -2040,6 +1956,9 @@ class GEOS5FPConnection:
                                     # Extract all variables
                                     for var_name, var_opendap in zip(var_names_in_dataset, var_opendap_names):
                                         value = result.df.iloc[closest_idx][var_opendap]
+                                        # Apply transformation if defined for this variable
+                                        if var_name in VARIABLE_TRANSFORMATIONS:
+                                            value = VARIABLE_TRANSFORMATIONS[var_name](value)
                                         results_by_index[record['index']][var_name] = value
                         
                         except Exception as e:
@@ -2069,6 +1988,73 @@ class GEOS5FPConnection:
             # Convert to GeoDataFrame
             result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
             
+            # Compute derived/computed variables
+            if computed_variables:
+                logger.info(f"Computing derived variables: {', '.join(computed_variables)}")
+                for var_name in computed_variables:
+                    try:
+                        # Call the appropriate method for each computed variable
+                        if var_name == 'RH':
+                            # Compute RH from Q, PS, and Ta (for SVP)
+                            if 'Q' in result_gdf.columns and 'PS' in result_gdf.columns and 'Ta' in result_gdf.columns:
+                                # Import RH calculation utility
+                                from GEOS5FP.calculate_RH import calculate_RH
+                                
+                                # Get the base variables
+                                Q = result_gdf['Q'].values
+                                PS = result_gdf['PS'].values
+                                Ta_K = result_gdf['Ta'].values
+                                
+                                # Calculate RH
+                                RH = calculate_RH(Q, PS, Ta_K)
+                                
+                                result_gdf['RH'] = RH
+                            else:
+                                logger.warning("Cannot compute RH: missing required variables (Q, PS, Ta)")
+                                result_gdf['RH'] = None
+                                
+                        elif var_name == 'Ta_C':
+                            # Convert Ta from Kelvin to Celsius
+                            if 'Ta' in result_gdf.columns:
+                                result_gdf['Ta_C'] = result_gdf['Ta'] - 273.15
+                            else:
+                                logger.warning("Cannot compute Ta_C: missing Ta")
+                                result_gdf['Ta_C'] = None
+                        # Add more computed variables as needed
+                    except Exception as e:
+                        logger.warning(f"Failed to compute {var_name}: {e}")
+                        result_gdf[var_name] = None
+                
+                # Remove dependency columns that weren't originally requested
+                cols_to_keep = ['geometry'] + variable_names
+                cols_to_drop = [col for col in result_gdf.columns if col not in cols_to_keep]
+                if cols_to_drop:
+                    result_gdf = result_gdf.drop(columns=cols_to_drop)
+            
+            # Ensure geometry column is at the end
+            if 'geometry' in result_gdf.columns:
+                cols = [c for c in result_gdf.columns if c != 'geometry']
+                cols.append('geometry')
+                result_gdf = result_gdf[cols]
+            
+            # Handle targets_df: merge results back into original table
+            if targets_df is not None:
+                # Drop time_UTC and geometry from result_gdf as they're already in targets_df
+                result_cols = [c for c in result_gdf.columns if c not in ['time_UTC', 'geometry']]
+                result_data = result_gdf[result_cols].reset_index(drop=True)
+                
+                # Add variable columns to targets_df
+                for col in result_cols:
+                    targets_df[col] = result_data[col].values
+                
+                # Ensure geometry column is at the end
+                if 'geometry' in targets_df.columns:
+                    cols = [c for c in targets_df.columns if c != 'geometry']
+                    cols.append('geometry')
+                    targets_df = targets_df[cols]
+                
+                return targets_df
+            
             return result_gdf
         
         # Create Point geometry from lat/lon if provided
@@ -2080,11 +2066,11 @@ class GEOS5FPConnection:
         # Determine if this is a point query with time range
         is_point_time_series = (
             time_range is not None and 
-            (self._is_point_geometry(geometry) or (lat is not None and lon is not None))
+            (is_point_geometry(geometry) or (lat is not None and lon is not None))
         )
         
         # Check if multiple variables requested for non-point query
-        if not single_variable and not self._is_point_geometry(geometry):
+        if not single_variable and not is_point_geometry(geometry):
             raise ValueError("Multiple variables can only be queried for point geometries")
         
         # Handle point time-series queries with OPeNDAP
@@ -2097,7 +2083,7 @@ class GEOS5FPConnection:
             
             # Extract point coordinates
             if geometry is not None:
-                points = self._extract_points(geometry)
+                points = extract_points(geometry)
             else:
                 points = [(lat, lon)]
             
@@ -2109,7 +2095,7 @@ class GEOS5FPConnection:
                 var_dataset = dataset
                 if var_dataset is None:
                     if var_name in GEOS5FP_VARIABLES:
-                        _, var_dataset, raw_variable = self._get_variable_info(var_name)
+                        _, var_dataset, raw_variable = get_variable_info(var_name)
                     else:
                         raise ValueError(
                             f"Dataset must be specified when using raw variable name '{var_name}'. "
@@ -2118,7 +2104,7 @@ class GEOS5FPConnection:
                 else:
                     # Use provided dataset, determine variable
                     if var_name in GEOS5FP_VARIABLES:
-                        _, _, raw_variable = self._get_variable_info(var_name)
+                        _, _, raw_variable = get_variable_info(var_name)
                     else:
                         raw_variable = var_name
                 
@@ -2212,7 +2198,7 @@ class GEOS5FPConnection:
                 # Check if variable is in our predefined list
                 if var_name in GEOS5FP_VARIABLES:
                     # Use the standard retrieval method
-                    return self._get_simple_variable(
+                    return self.variable(
                         var_name,
                         time_UTC,
                         geometry=geometry,
@@ -2232,7 +2218,7 @@ class GEOS5FPConnection:
                         time_UTC = parser.parse(time_UTC)
                     
                     # Check if this is a point query
-                    if self._is_point_geometry(geometry):
+                    if is_point_geometry(geometry):
                         if not HAS_OPENDAP_SUPPORT:
                             raise ImportError(
                                 "Point query support requires xarray and netCDF4. "
@@ -2244,7 +2230,7 @@ class GEOS5FPConnection:
                             f"from GEOS-5 FP {dataset} at point location(s)"
                         )
                         
-                        points = self._extract_points(geometry)
+                        points = extract_points(geometry)
                         dfs = []
                         variable_opendap = var_name.lower()
                         
@@ -2274,6 +2260,9 @@ class GEOS5FPConnection:
                                 
                                 if variable_opendap in df_point.columns:
                                     df_point = df_point.rename(columns={variable_opendap: var_name})
+                                    # Apply transformation if defined for this variable
+                                    if var_name in VARIABLE_TRANSFORMATIONS:
+                                        df_point[var_name] = df_point[var_name].apply(VARIABLE_TRANSFORMATIONS[var_name])
                                 
                                 # Add geometry column at the end
                                 df_point['geometry'] = Point(pt_lon, pt_lat)
@@ -2287,8 +2276,14 @@ class GEOS5FPConnection:
                         
                         result_df = pd.concat(dfs, ignore_index=False)
                         result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
+                        
+                        # Ensure geometry column is at the end
+                        if 'geometry' in result_gdf.columns:
+                            cols = [c for c in result_gdf.columns if c != 'geometry']
+                            cols.append('geometry')
+                            result_gdf = result_gdf[cols]
+                        
                         return result_gdf
-                    
                     # Raster query
                     else:
                         logger.info(
@@ -2308,7 +2303,7 @@ class GEOS5FPConnection:
             
             # Multiple variables at single time (point query only)
             else:
-                if not self._is_point_geometry(geometry):
+                if not is_point_geometry(geometry):
                     raise ValueError("Multiple variables can only be queried for point geometries")
                 
                 if not HAS_OPENDAP_SUPPORT:
@@ -2329,7 +2324,7 @@ class GEOS5FPConnection:
                         f"temporal_interpolation must be 'nearest' or 'interpolate', got '{temporal_interpolation}'"
                     )
                 
-                points = self._extract_points(geometry)
+                points = extract_points(geometry)
                 all_variable_dfs = []
                 
                 # Process each variable
@@ -2338,7 +2333,7 @@ class GEOS5FPConnection:
                     var_dataset = dataset
                     if var_dataset is None:
                         if var_name in GEOS5FP_VARIABLES:
-                            _, var_dataset, raw_variable = self._get_variable_info(var_name)
+                            _, var_dataset, raw_variable = get_variable_info(var_name)
                         else:
                             raise ValueError(
                                 f"Dataset must be specified when using raw variable name '{var_name}'. "
@@ -2347,7 +2342,7 @@ class GEOS5FPConnection:
                     else:
                         # Use provided dataset, determine variable
                         if var_name in GEOS5FP_VARIABLES:
-                            _, _, raw_variable = self._get_variable_info(var_name)
+                            _, _, raw_variable = get_variable_info(var_name)
                         else:
                             raw_variable = var_name
                     
@@ -2431,6 +2426,9 @@ class GEOS5FPConnection:
                             
                             if variable_opendap in df_point.columns:
                                 df_point = df_point.rename(columns={variable_opendap: var_name})
+                                # Apply transformation if defined for this variable
+                                if var_name in VARIABLE_TRANSFORMATIONS:
+                                    df_point[var_name] = df_point[var_name].apply(VARIABLE_TRANSFORMATIONS[var_name])
                             
                             # Add geometry column at the end
                             df_point['geometry'] = Point(pt_lon, pt_lat)

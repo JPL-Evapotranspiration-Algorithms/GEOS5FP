@@ -15,7 +15,7 @@ lon = -76.656
 
 print("Testing single variable query (COT)...")
 try:
-    result = conn.variable(
+    result = conn.query(
         "COT",
         time_UTC=time_utc,
         lat=lat,
@@ -30,7 +30,7 @@ except Exception as e:
 
 print("\nTesting another single variable (AOT)...")
 try:
-    result = conn.variable(
+    result = conn.query(
         "AOT",
         time_UTC=time_utc,
         lat=lat,

@@ -111,8 +111,8 @@ start_time = end_time - timedelta(days=7)  # 7 days of data
 
 # Get time series for a point location
 lat, lon = 34.05, -118.25
-df = conn.variable(
-    "Ta_K",
+df = conn.query(
+    target_variables="Ta_K",
     time_range=(start_time, end_time),
     lat=lat,
     lon=lon
@@ -125,8 +125,8 @@ print(df)  # Returns DataFrame with time series
 ```python
 # Query multiple variables at once
 variables = ["Ta_K", "SM", "LAI"]
-df_multi = conn.variable(
-    variable_name=variables,
+df_multi = conn.query(
+    target_variables=variables,
     time_range=(start_time, end_time),
     lat=lat,
     lon=lon
@@ -151,8 +151,8 @@ gdf = gpd.GeoDataFrame(
 )
 
 # Query all points and times at once (vectorized operation)
-results = conn.variable(
-    variable_name=["Ta_K", "SM", "LAI"],
+results = conn.query(
+    target_variables=["Ta_K", "SM", "LAI"],
     time_UTC=gdf['time_UTC'],
     geometry=gdf['geometry']
 )
@@ -165,8 +165,8 @@ You can also query variables directly by their GEOS-5 FP product and variable na
 
 ```python
 # Query specific humidity from tavg1_2d_slv_Nx product
-df = conn.variable(
-    "QV2M",  # Raw GEOS-5 FP variable name
+df = conn.query(
+    target_variables="QV2M",  # Raw GEOS-5 FP variable name
     time_range=(start_time, end_time),
     dataset="tavg1_2d_slv_Nx",
     lat=lat,

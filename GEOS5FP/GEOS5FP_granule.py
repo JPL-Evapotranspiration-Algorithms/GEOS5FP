@@ -10,13 +10,12 @@ import rasters as rt
 from rasters import RasterGeometry, Raster
 import shapely
  
+from .constants import DEFAULT_DOWNSAMPLING
 from .exceptions import GEOS5FPGranuleNotAvailable
 
 logger = logging.getLogger(__name__)
 
 class GEOS5FPGranule:
-    DEFAULT_RESAMPLING_METHOD = "cubic"
-
     def __init__(self, filename: str):
         if not exists(abspath(expanduser(filename))):
             raise IOError(f"GEOS-5 FP file does not exist: {filename}")
@@ -55,8 +54,7 @@ class GEOS5FPGranule:
             if isinstance(geometry, (rt.Point, shapely.geometry.Point)):
                 resampling = "nearest"
             else:
-                resampling = self.DEFAULT_RESAMPLING_METHOD
-
+                resampling = DEFAULT_DOWNSAMPLING
         if nodata is None:
             nodata = np.nan
 
@@ -76,17 +74,5 @@ class GEOS5FPGranule:
                 data = rt.where(data == exclusion_value, np.nan, data)
 
         data = rt.clip(data, min_value, max_value)
-
-        # if geometry is not None:
-        #     # Use nearest neighbor resampling for Point geometries to avoid expensive cubic interpolation
-        #     # when extracting single pixel values from large global rasters
-        #     if hasattr(geometry, 'geom_type') and geometry.geom_type == 'Point':
-        #         # shapely Point geometry
-        #         data = data.to_geometry(geometry, resampling='nearest')
-        #     elif hasattr(geometry, '__class__') and 'Point' in geometry.__class__.__name__:
-        #         # rasters Point geometry
-        #         data = data.to_geometry(geometry, resampling='nearest')
-        #     else:
-        #         data = data.to_geometry(geometry, resampling=resampling)
 
         return data

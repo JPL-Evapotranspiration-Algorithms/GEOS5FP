@@ -31,7 +31,7 @@ NDVI_CMAP = LinearSegmentedColormap.from_list(
 )
 
 DEFAULT_UPSAMPLING = "mean"
-DEFAULT_DOWNSAMPLING = "cubic"
+DEFAULT_DOWNSAMPLING = "lanczos"
 
 # GEOS-5 FP Variable Mappings
 # Load variable mappings from CSV file
@@ -52,3 +52,20 @@ def _load_variables():
     return variables_dict
 
 GEOS5FP_VARIABLES = _load_variables()
+
+# Variable transformations (applied after data retrieval)
+# Maps variable names to transformation functions
+VARIABLE_TRANSFORMATIONS = {
+    'Ta_C': lambda x: x - 273.15,  # Convert Kelvin to Celsius
+}
+
+# Computed/derived variables that require calling methods
+# These cannot be queried directly but must be computed from other variables
+COMPUTED_VARIABLES = {
+    'RH',      # Relative Humidity (computed from Q, PS, Ta)
+    'Ta_C',    # Temperature in Celsius (computed from Ta_K)
+    'Ea_Pa',   # Actual Vapor Pressure (computed from RH and SVP)
+    'SVP_Pa',  # Saturated Vapor Pressure (computed from Ta)
+    'VPD_kPa', # Vapor Pressure Deficit (computed from SVP and Ea)
+    'Td_K',    # Dew Point Temperature (computed from Ta and RH)
+}

@@ -43,7 +43,7 @@ def benchmark_naive_row_by_row(gdf, variable_names):
             query_count += 1
             try:
                 # Query single time point
-                result = conn.variable(
+                result = conn.query(
                     variable_name=var_name,
                     time_UTC=row['time_UTC'],
                     geometry=row['geometry']
@@ -89,7 +89,7 @@ def benchmark_optimized_vectorized(gdf, variable_names):
     start_time = time.time()
     
     try:
-        results = conn.variable(
+        results = conn.query(
             variable_name=variable_names,
             time_UTC=gdf['time_UTC'],
             geometry=gdf['geometry']
