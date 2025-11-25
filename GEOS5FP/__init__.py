@@ -1,3 +1,11 @@
+import os
+import warnings
+
+# Suppress NumExpr threading messages
+os.environ['NUMEXPR_MAX_THREADS'] = str(os.cpu_count() or 1)
+os.environ['NUMEXPR_NUM_THREADS'] = str(os.cpu_count() or 1)
+warnings.filterwarnings('ignore', message='.*NumExpr.*')
+
 from .GEOS5FP import *
 from .version import __version__
 from .validate_GEOS5FP_NetCDF_file import (
