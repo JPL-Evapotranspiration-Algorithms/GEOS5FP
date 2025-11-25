@@ -41,7 +41,7 @@ print(f"  Geometries: {gdf['geometry'].tolist()}")
 print()
 
 try:
-    results = conn.variable(
+    results = conn.query(
         variable_name="Ta_K",
         time_UTC=gdf['time_UTC'],
         geometry=gdf['geometry']

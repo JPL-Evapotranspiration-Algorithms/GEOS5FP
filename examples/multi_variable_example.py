@@ -22,7 +22,7 @@ lon = -76.656
 
 print("Example 1: Single variable query")
 print("=" * 50)
-df_single = conn.variable(
+df_single = conn.query(
     "T2M",
     time_range=(start_time, end_time),
     dataset="tavg1_2d_slv_Nx",
@@ -34,7 +34,7 @@ print()
 
 print("Example 2: Multiple variables query (as list)")
 print("=" * 50)
-df_multi = conn.variable(
+df_multi = conn.query(
     ["T2M", "PS", "QV2M"],
     time_range=(start_time, end_time),
     dataset="tavg1_2d_slv_Nx",
@@ -46,7 +46,7 @@ print()
 
 print("Example 3: Multiple predefined variables (no dataset needed)")
 print("=" * 50)
-df_predefined = conn.variable(
+df_predefined = conn.query(
     ["Ta_K", "SM", "LAI"],
     time_range=(start_time, end_time),
     lat=lat,
@@ -57,7 +57,7 @@ print()
 
 print("Example 4: Single time, multiple variables at point")
 print("=" * 50)
-df_single_time = conn.variable(
+df_single_time = conn.query(
     ["T2M", "PS", "QV2M"],
     time_UTC=end_time,
     dataset="tavg1_2d_slv_Nx",

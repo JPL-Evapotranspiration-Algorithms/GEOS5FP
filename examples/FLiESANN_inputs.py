@@ -91,7 +91,7 @@ for idx, row in df.iterrows():
     try:
         # Query all four variables at once using temporal interpolation
         # This handles different temporal resolutions by interpolating to the target time
-        result_df = conn.variable(
+        result_df = conn.query(
             ["COT", "AOT", "vapor_gccm", "ozone_cm"],
             time_UTC=time_utc,
             lat=lat,

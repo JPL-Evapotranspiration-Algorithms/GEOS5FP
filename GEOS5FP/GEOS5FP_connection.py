@@ -512,7 +512,7 @@ class GEOS5FPConnection:
 
         return before_granule, after_granule
 
-    def _get_simple_variable(
+    def variable(
             self,
             variable_name: str,
             time_UTC: Union[datetime, str],
@@ -527,21 +527,47 @@ class GEOS5FPConnection:
             clip_min: Any = None,
             clip_max: Any = None) -> Union[Raster, pd.DataFrame]:
         """
-        Generic method to retrieve a simple variable that requires only interpolation.
+        Retrieve a single predefined variable at a specific time.
         
-        :param variable_name: Name of the variable (must exist in GEOS5FP_VARIABLES)
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry (can be raster geometry or Point/MultiPoint for time-series)
-        :param resampling: optional sampling method for resampling to target geometry
-        :param interval: optional interval for product listing
-        :param expected_hours: optional expected hours for product listing
-        :param min_value: minimum value for interpolation
-        :param max_value: maximum value for interpolation
-        :param exclude_values: values to exclude in interpolation
-        :param cmap: colormap for the result
-        :param clip_min: minimum value for final clipping (applied after interpolation)
-        :param clip_max: maximum value for final clipping (applied after interpolation)
-        :return: raster of the requested variable or DataFrame for point queries or DataFrame for point queries
+        This is a convenience method for retrieving individual variables from the
+        GEOS5FP_VARIABLES registry. For more advanced queries including multiple
+        variables, time ranges, or batch queries, use the query() method instead.
+        
+        Parameters
+        ----------
+        variable_name : str
+            Name of the variable (must exist in GEOS5FP_VARIABLES)
+        time_UTC : datetime or str
+            Date/time in UTC
+        geometry : RasterGeometry or Point or MultiPoint, optional
+            Target geometry (can be raster geometry or Point/MultiPoint for time-series)
+        resampling : str, optional
+            Sampling method for resampling to target geometry
+        interval : int, optional
+            Interval for product listing
+        expected_hours : list of float, optional
+            Expected hours for product listing
+        min_value : Any, optional
+            Minimum value for interpolation
+        max_value : Any, optional
+            Maximum value for interpolation
+        exclude_values : optional
+            Values to exclude in interpolation
+        cmap : optional
+            Colormap for the result
+        clip_min : Any, optional
+            Minimum value for final clipping (applied after interpolation)
+        clip_max : Any, optional
+            Maximum value for final clipping (applied after interpolation)
+        
+        Returns
+        -------
+        Raster or DataFrame
+            Raster of the requested variable or DataFrame for point queries
+        
+        See Also
+        --------
+        query : More flexible query method supporting multiple variables and time ranges
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
@@ -746,7 +772,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "SFMC",
             time_UTC,
             geometry=geometry,
@@ -768,7 +794,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of LAI or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "LAI",
             time_UTC,
             geometry=geometry,
@@ -802,7 +828,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "LHLAND",
             time_UTC,
             geometry=geometry,
@@ -819,7 +845,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "EFLUX",
             time_UTC,
             geometry=geometry,
@@ -835,7 +861,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "PARDR",
             time_UTC,
             geometry=geometry,
@@ -851,7 +877,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "PARDF",
             time_UTC,
             geometry=geometry,
@@ -870,7 +896,7 @@ class GEOS5FPConnection:
         # 1:30, 4:30, 7:30, 10:30, 13:30, 16:30, 19:30, 22:30 UTC
         EXPECTED_HOURS = [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
         
-        return self._get_simple_variable(
+        return self.variable(
             "AOT",
             time_UTC,
             geometry=geometry,
@@ -886,7 +912,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of COT or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "COT",
             time_UTC,
             geometry=geometry,
@@ -905,7 +931,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of Ta or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "Ts_K",
             time_UTC,
             geometry=geometry,
@@ -938,7 +964,7 @@ class GEOS5FPConnection:
         
         # If point geometry and no downscaling requested, use simple variable retrieval
         if is_point_geometry(geometry) and ST_K is None:
-            return self._get_simple_variable(
+            return self.variable(
                 "Ta_K",
                 time_UTC,
                 geometry=geometry,
@@ -1013,7 +1039,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of Ta or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "Tmin_K",
             time_UTC,
             geometry=geometry,
@@ -1040,7 +1066,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of surface pressure or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "PS",
             time_UTC,
             geometry=geometry,
@@ -1055,7 +1081,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of Q or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "Q",
             time_UTC,
             geometry=geometry,
@@ -1262,7 +1288,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm or DataFrame for point queries or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "vapor_kgsqm",
             time_UTC,
             geometry=geometry,
@@ -1288,7 +1314,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "ozone_dobson",
             time_UTC,
             geometry=geometry,
@@ -1314,7 +1340,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "U2M",
             time_UTC,
             geometry=geometry,
@@ -1329,7 +1355,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "V2M",
             time_UTC,
             geometry=geometry,
@@ -1347,7 +1373,7 @@ class GEOS5FPConnection:
         # 1:30, 4:30, 7:30, 10:30, 13:30, 16:30, 19:30, 22:30 UTC
         EXPECTED_HOURS = [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
         
-        return self._get_simple_variable(
+        return self.variable(
             "CO2SC",
             time_UTC,
             geometry=geometry,
@@ -1379,7 +1405,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of SWin or DataFrame for point queries or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "SWin",
             time_UTC,
             geometry=geometry,
@@ -1395,7 +1421,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of SWin or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "SWTDN",
             time_UTC,
             geometry=geometry,
@@ -1411,7 +1437,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "ALBVISDR",
             time_UTC,
             geometry=geometry,
@@ -1428,7 +1454,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "ALBVISDF",
             time_UTC,
             geometry=geometry,
@@ -1445,7 +1471,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "ALBNIRDF",
             time_UTC,
             geometry=geometry,
@@ -1462,7 +1488,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "ALBNIRDR",
             time_UTC,
             geometry=geometry,
@@ -1479,7 +1505,7 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
         """
-        return self._get_simple_variable(
+        return self.variable(
             "ALBEDO",
             time_UTC,
             geometry=geometry,
@@ -1488,7 +1514,7 @@ class GEOS5FPConnection:
             clip_max=1
         )
 
-    def variable(
+    def query(
             self,
             target_variables: Union[str, List[str]] = None,
             targets_df: Union[pd.DataFrame, gpd.GeoDataFrame] = None,
@@ -1504,7 +1530,7 @@ class GEOS5FPConnection:
             variable_name: Union[str, List[str]] = None,
             **kwargs) -> Union[Raster, gpd.GeoDataFrame]:
         """
-        General-purpose variable retrieval method that can query any variable from any dataset.
+        General-purpose query method that can retrieve any variable from any dataset.
         
         This method provides a flexible interface for retrieving GEOS-5 FP data, supporting both:
         - Raster queries (for spatial data over a region)
@@ -1572,7 +1598,7 @@ class GEOS5FPConnection:
         >>> conn = GEOS5FPConnection()
         >>> end_time = datetime(2024, 11, 15)
         >>> start_time = end_time - timedelta(days=7)
-        >>> df = conn.variable(
+        >>> df = conn.query(
         ...     "T2M",
         ...     time_range=(start_time, end_time),
         ...     dataset="tavg1_2d_slv_Nx",
@@ -1581,7 +1607,7 @@ class GEOS5FPConnection:
         ... )
         
         # Example 2: Multiple variables in point query
-        >>> df = conn.variable(
+        >>> df = conn.query(
         ...     ["T2M", "PS", "QV2M"],
         ...     time_range=(start_time, end_time),
         ...     dataset="tavg1_2d_slv_Nx",
@@ -1592,7 +1618,7 @@ class GEOS5FPConnection:
         # Example 3: Raster query at single time
         >>> from rasters import RasterGeometry
         >>> geometry = RasterGeometry.open("target_area.tif")
-        >>> raster = conn.variable(
+        >>> raster = conn.query(
         ...     "T2M",
         ...     time_UTC="2024-11-15 12:00:00",
         ...     dataset="tavg1_2d_slv_Nx",
@@ -1600,7 +1626,7 @@ class GEOS5FPConnection:
         ... )
         
         # Example 4: Use predefined variable name
-        >>> df = conn.variable(
+        >>> df = conn.query(
         ...     "Ta_K",
         ...     time_range=(start_time, end_time),
         ...     lat=34.05,
@@ -1608,7 +1634,7 @@ class GEOS5FPConnection:
         ... )
         
         # Example 5: Query multiple predefined variables
-        >>> df = conn.variable(
+        >>> df = conn.query(
         ...     target_variables=["Ta_K", "SM", "SWin"],
         ...     time_range=(start_time, end_time),
         ...     lat=40.7,
@@ -1621,7 +1647,7 @@ class GEOS5FPConnection:
         ...     'time_UTC': [datetime(2024, 11, 15, 12), datetime(2024, 11, 15, 13)],
         ...     'geometry': [Point(-118.25, 34.05), Point(-74.0, 40.7)]
         ... })
-        >>> result = conn.variable(
+        >>> result = conn.query(
         ...     target_variables=["Ta_C", "RH"],
         ...     targets_df=targets
         ... )
@@ -2173,7 +2199,7 @@ class GEOS5FPConnection:
                 # Check if variable is in our predefined list
                 if var_name in GEOS5FP_VARIABLES:
                     # Use the standard retrieval method
-                    return self._get_simple_variable(
+                    return self.variable(
                         var_name,
                         time_UTC,
                         geometry=geometry,

@@ -48,7 +48,7 @@ for idx, row in df.iterrows():
         # Query each variable
         for var_name in ["COT", "AOT", "vapor_gccm", "ozone_cm"]:
             try:
-                var_df = conn.variable(
+                var_df = conn.query(
                     var_name,
                     time_UTC=time_utc,
                     lat=lat,

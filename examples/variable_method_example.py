@@ -42,7 +42,7 @@ try:
     print(f"Time range: {start_time} to {end_time}")
     print(f"Variable: Ta_K (air temperature in Kelvin)")
     
-    df_temp = conn.variable(
+    df_temp = conn.query(
         "Ta_K",
         time_range=(start_time, end_time),
         lat=lat,
@@ -69,7 +69,7 @@ try:
     print(f"Variable: QV2M (2-meter specific humidity)")
     print(f"Dataset: tavg1_2d_slv_Nx")
     
-    df_humidity = conn.variable(
+    df_humidity = conn.query(
         "QV2M",  # Raw GEOS-5 FP variable name
         time_range=(start_time, end_time),
         dataset="tavg1_2d_slv_Nx",
@@ -96,7 +96,7 @@ try:
     # Temperature (already have this)
     
     # Wind components
-    df_u = conn.variable(
+    df_u = conn.query(
         "U2M",
         time_range=(start_time, end_time),
         dataset="tavg1_2d_slv_Nx",
@@ -104,7 +104,7 @@ try:
         lon=lon
     )
     
-    df_v = conn.variable(
+    df_v = conn.query(
         "V2M",
         time_range=(start_time, end_time),
         dataset="tavg1_2d_slv_Nx",
@@ -113,7 +113,7 @@ try:
     )
     
     # Solar radiation
-    df_solar = conn.variable(
+    df_solar = conn.query(
         "SWGDN",  # Surface incoming shortwave flux
         time_range=(start_time, end_time),
         dataset="tavg1_2d_rad_Nx",
@@ -157,7 +157,7 @@ try:
     print(f"Location: New York ({ny_lat}°N, {ny_lon}°W)")
     print(f"Variable: T2M (2-meter air temperature)")
     
-    df_ny = conn.variable(
+    df_ny = conn.query(
         "T2M",
         time_range=(start_time, end_time),
         dataset="tavg1_2d_slv_Nx",

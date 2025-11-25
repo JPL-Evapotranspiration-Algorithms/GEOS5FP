@@ -32,7 +32,7 @@ def benchmark_multi_variable(gdf, variable_names):
     
     try:
         # Use optimized vectorized query (now with multi-variable support)
-        result_gdf = conn.variable(
+        result_gdf = conn.query(
             variable_name=variable_names,
             time_UTC=gdf['time_UTC'],
             geometry=gdf['geometry']

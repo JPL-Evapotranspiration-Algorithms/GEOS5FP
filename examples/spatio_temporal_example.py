@@ -39,7 +39,7 @@ print()
 
 # Vectorized query: pass lists of times and geometries directly
 print("Executing vectorized query (no row-by-row iteration)...")
-results = conn.variable(
+results = conn.query(
     variable_name=variable_names,
     time_UTC=gdf_test['time_UTC'],
     geometry=gdf_test['geometry']
@@ -72,7 +72,7 @@ print("=" * 70)
 print(f"Processing full dataset ({len(gdf)} records) with vectorized query...")
 print("=" * 70)
 
-results_full = conn.variable(
+results_full = conn.query(
     variable_name=variable_names,
     time_UTC=gdf['time_UTC'],
     geometry=gdf['geometry']

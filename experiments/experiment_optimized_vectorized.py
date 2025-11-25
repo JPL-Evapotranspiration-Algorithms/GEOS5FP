@@ -61,7 +61,7 @@ print(flush=True)
 
 conn = GEOS5FPConnection()
 
-results = conn.variable(
+results = conn.query(
     variable_name=['Ta_K', 'SM', 'LAI'],
     time_UTC=gdf['time_UTC'],
     geometry=gdf['geometry']

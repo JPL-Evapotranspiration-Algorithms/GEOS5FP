@@ -55,7 +55,7 @@ for idx, row in sample_records.iterrows():
     
     try:
         # Query multiple variables at this point
-        df = conn.variable(
+        df = conn.query(
             variables,
             time_UTC=time_utc,
             dataset=dataset,
