@@ -100,6 +100,48 @@ class GEOS5FPConnection:
         else:
             raise IOError(f"status: {status} URL: {self.remote}")
 
+    def _get_variable_info(self, variable_name: str) -> Tuple[str, str, str]:
+        """
+        Get information about a GEOS-5 FP variable.
+        
+        Args:
+            variable_name: Name or alias of the variable
+            
+        Returns:
+            Tuple of (description, product, variable)
+            
+        Raises:
+            ValueError: If variable name is invalid
+        """
+        return get_variable_info(variable_name)
+
+    def _is_point_geometry(self, geometry: Any) -> bool:
+        """
+        Check if a geometry is a point or multipoint.
+        
+        Args:
+            geometry: Shapely geometry object or other input
+            
+        Returns:
+            True if geometry is Point or MultiPoint, False otherwise
+        """
+        return is_point_geometry(geometry)
+
+    def _extract_points(self, geometry: Any) -> List[Tuple[float, float]]:
+        """
+        Extract (lon, lat) coordinates from point geometry.
+        
+        Args:
+            geometry: Point or MultiPoint geometry
+            
+        Returns:
+            List of (longitude, latitude) tuples
+            
+        Raises:
+            ValueError: If geometry is not a point type
+        """
+        return extract_points(geometry)
+
     @property
     def years_available(self) -> List[date]:
         listing = self.list_remote_directory(self.remote)
