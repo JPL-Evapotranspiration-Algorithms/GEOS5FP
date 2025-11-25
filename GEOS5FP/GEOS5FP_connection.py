@@ -114,6 +114,8 @@ from .GEOS5FP_granule import GEOS5FPGranule
 from .timer import Timer
 from .downscaling import linear_downscale, bias_correct
 from .download_file import download_file
+from .get_variable_info import get_variable_info
+from .geometry_utils import is_point_geometry, extract_points
 
 # Optional import for point queries via OPeNDAP
 try:
@@ -166,71 +168,6 @@ class GEOS5FPConnection:
         display_string = json.dumps(display_dict, indent=2)
 
         return display_string
-
-    def _get_variable_info(self, variable_name: str) -> Tuple[str, str, str]:
-        """
-        Look up variable metadata from constants.
-        
-        :param variable_name: The name of the variable to look up
-        :return: Tuple of (description, product, variable)
-        :raises KeyError: If variable_name is not found in GEOS5FP_VARIABLES
-        """
-        if variable_name not in GEOS5FP_VARIABLES:
-            raise KeyError(f"Variable '{variable_name}' not found in GEOS5FP_VARIABLES")
-        
-        return GEOS5FP_VARIABLES[variable_name]
-
-    def _is_point_geometry(self, geometry) -> bool:
-        """
-        Check if geometry is a point or multipoint.
-        
-        :param geometry: Geometry to check (can be shapely Point/MultiPoint or rasters Point/MultiPoint)
-        :return: True if point geometry, False otherwise
-        """
-        if geometry is None:
-            return False
-        
-        # Check shapely types
-        if isinstance(geometry, (Point, MultiPoint)):
-            return True
-        
-        # Check if it's a rasters geometry with point type
-        if hasattr(geometry, 'geometry') and isinstance(geometry.geometry, (Point, MultiPoint)):
-            return True
-        
-        # Check string representation
-        geom_type = str(type(geometry).__name__).lower()
-        if 'point' in geom_type:
-            return True
-            
-        return False
-
-    def _extract_points(self, geometry) -> List[Tuple[float, float]]:
-        """
-        Extract (lat, lon) coordinates from point geometry.
-        
-        :param geometry: Point or MultiPoint geometry
-        :return: List of (lat, lon) tuples
-        """
-        points = []
-        
-        # Handle rasters geometry wrapper
-        if hasattr(geometry, 'geometry'):
-            geom = geometry.geometry
-        else:
-            geom = geometry
-        
-        if isinstance(geom, Point):
-            # Single point: (lon, lat) in shapely
-            points.append((geom.y, geom.x))
-        elif isinstance(geom, MultiPoint):
-            # Multiple points
-            for pt in geom.geoms:
-                points.append((pt.y, pt.x))
-        else:
-            raise ValueError(f"Unsupported geometry type for point extraction: {type(geom)}")
-        
-        return points
 
     def _check_remote(self):
         logger.info(f"checking URL: {cl.URL(self.remote)}")
@@ -688,10 +625,10 @@ class GEOS5FPConnection:
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
             
-        NAME, PRODUCT, VARIABLE = self._get_variable_info(variable_name)
+        NAME, PRODUCT, VARIABLE = get_variable_info(variable_name)
         
         # Check if this is a point query
-        if self._is_point_geometry(geometry):
+        if is_point_geometry(geometry):
             if not HAS_OPENDAP_SUPPORT:
                 raise ImportError(
                     "Point query support requires xarray and netCDF4. "
@@ -704,7 +641,7 @@ class GEOS5FPConnection:
                 "at point location(s)"
             )
             
-            points = self._extract_points(geometry)
+            points = extract_points(geometry)
             dfs = []
             
             # OPeNDAP uses lowercase variable names
@@ -1079,7 +1016,7 @@ class GEOS5FPConnection:
             time_UTC = parser.parse(time_UTC)
         
         # If point geometry and no downscaling requested, use simple variable retrieval
-        if self._is_point_geometry(geometry) and ST_K is None:
+        if is_point_geometry(geometry) and ST_K is None:
             return self._get_simple_variable(
                 "Ta_K",
                 time_UTC,
@@ -1087,7 +1024,7 @@ class GEOS5FPConnection:
                 resampling=resampling
             )
         
-        NAME, PRODUCT, VARIABLE = self._get_variable_info("Ta_K")
+        NAME, PRODUCT, VARIABLE = get_variable_info("Ta_K")
 
         logger.info(
             f"retrieving {cl.name(NAME)} "
@@ -1955,7 +1892,7 @@ class GEOS5FPConnection:
                 var_dataset = dataset
                 if var_dataset is None:
                     if var_name in GEOS5FP_VARIABLES:
-                        _, var_dataset, raw_variable = self._get_variable_info(var_name)
+                        _, var_dataset, raw_variable = get_variable_info(var_name)
                     else:
                         raise ValueError(
                             f"Dataset must be specified when using raw variable name '{var_name}'. "
@@ -1965,7 +1902,7 @@ class GEOS5FPConnection:
                 else:
                     # Use provided dataset, determine variable
                     if var_name in GEOS5FP_VARIABLES:
-                        _, _, raw_variable = self._get_variable_info(var_name)
+                        _, _, raw_variable = get_variable_info(var_name)
                     else:
                         raw_variable = var_name
                 
@@ -2183,11 +2120,11 @@ class GEOS5FPConnection:
         # Determine if this is a point query with time range
         is_point_time_series = (
             time_range is not None and 
-            (self._is_point_geometry(geometry) or (lat is not None and lon is not None))
+            (is_point_geometry(geometry) or (lat is not None and lon is not None))
         )
         
         # Check if multiple variables requested for non-point query
-        if not single_variable and not self._is_point_geometry(geometry):
+        if not single_variable and not is_point_geometry(geometry):
             raise ValueError("Multiple variables can only be queried for point geometries")
         
         # Handle point time-series queries with OPeNDAP
@@ -2200,7 +2137,7 @@ class GEOS5FPConnection:
             
             # Extract point coordinates
             if geometry is not None:
-                points = self._extract_points(geometry)
+                points = extract_points(geometry)
             else:
                 points = [(lat, lon)]
             
@@ -2335,7 +2272,7 @@ class GEOS5FPConnection:
                         time_UTC = parser.parse(time_UTC)
                     
                     # Check if this is a point query
-                    if self._is_point_geometry(geometry):
+                    if is_point_geometry(geometry):
                         if not HAS_OPENDAP_SUPPORT:
                             raise ImportError(
                                 "Point query support requires xarray and netCDF4. "
@@ -2347,7 +2284,7 @@ class GEOS5FPConnection:
                             f"from GEOS-5 FP {dataset} at point location(s)"
                         )
                         
-                        points = self._extract_points(geometry)
+                        points = extract_points(geometry)
                         dfs = []
                         variable_opendap = var_name.lower()
                         
@@ -2420,7 +2357,7 @@ class GEOS5FPConnection:
             
             # Multiple variables at single time (point query only)
             else:
-                if not self._is_point_geometry(geometry):
+                if not is_point_geometry(geometry):
                     raise ValueError("Multiple variables can only be queried for point geometries")
                 
                 if not HAS_OPENDAP_SUPPORT:
@@ -2441,7 +2378,7 @@ class GEOS5FPConnection:
                         f"temporal_interpolation must be 'nearest' or 'interpolate', got '{temporal_interpolation}'"
                     )
                 
-                points = self._extract_points(geometry)
+                points = extract_points(geometry)
                 all_variable_dfs = []
                 
                 # Process each variable
@@ -2450,7 +2387,7 @@ class GEOS5FPConnection:
                     var_dataset = dataset
                     if var_dataset is None:
                         if var_name in GEOS5FP_VARIABLES:
-                            _, var_dataset, raw_variable = self._get_variable_info(var_name)
+                            _, var_dataset, raw_variable = get_variable_info(var_name)
                         else:
                             raise ValueError(
                                 f"Dataset must be specified when using raw variable name '{var_name}'. "
@@ -2459,7 +2396,7 @@ class GEOS5FPConnection:
                     else:
                         # Use provided dataset, determine variable
                         if var_name in GEOS5FP_VARIABLES:
-                            _, _, raw_variable = self._get_variable_info(var_name)
+                            _, _, raw_variable = get_variable_info(var_name)
                         else:
                             raw_variable = var_name
                     
