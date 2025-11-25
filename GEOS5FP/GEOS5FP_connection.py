@@ -2114,22 +2114,16 @@ class GEOS5FPConnection:
                         if var_name == 'RH':
                             # Compute RH from Q, PS, and Ta (for SVP)
                             if 'Q' in result_gdf.columns and 'PS' in result_gdf.columns and 'Ta' in result_gdf.columns:
-                                import numpy as np
+                                # Import RH calculation utility
+                                from GEOS5FP.calculate_RH import calculate_RH
+                                
+                                # Get the base variables
                                 Q = result_gdf['Q'].values
                                 PS = result_gdf['PS'].values
                                 Ta_K = result_gdf['Ta'].values
                                 
-                                # Calculate SVP from temperature (Magnus formula)
-                                Ta_C = Ta_K - 273.15
-                                SVP_Pa = 611.2 * np.exp((17.67 * Ta_C) / (Ta_C + 243.5))
-                                
-                                # Calculate RH from specific humidity
-                                Mw = 18.015268  # g / mol
-                                Md = 28.96546e-3  # kg / mol
-                                epsilon = Mw / (Md * 1000)
-                                w = Q / (1 - Q)
-                                ws = epsilon * SVP_Pa / (PS - SVP_Pa)
-                                RH = np.clip(w / ws, 0, 1)
+                                # Calculate RH
+                                RH = calculate_RH(Q, PS, Ta_K)
                                 
                                 result_gdf['RH'] = RH
                             else:
