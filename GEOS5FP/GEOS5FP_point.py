@@ -78,7 +78,8 @@ def query_geos5fp_point(
     PointQueryResult
     """
     url = f"{base_url}/{dataset}"
-    ds = xr.open_dataset(url, engine=engine)
+    # Disable caching, locking, and CF decoding to speed up remote OPeNDAP access
+    ds = xr.open_dataset(url, engine=engine, cache=False, lock=False, decode_cf=False)
 
     # Handle longitude convention
     ds_lon = ds["lon"].values
@@ -107,10 +108,41 @@ def query_geos5fp_point(
         start, end = time_range
         start_n = _to_naive_utc(start)
         end_n = _to_naive_utc(end)
+        # With decode_cf=False, time is numeric - need to decode for selection
+        # Decode times for the selection operation
+        import xarray.coding.times as xr_times
+        time_var = da["time"]
+        if hasattr(time_var, 'attrs') and 'units' in time_var.attrs:
+            # Manually decode time for selection
+            decoded_times = xr_times.decode_cf_datetime(
+                time_var.values,
+                units=time_var.attrs.get('units'),
+                calendar=time_var.attrs.get('calendar', 'standard')
+            )
+            # Create a temporary DataArray with decoded times for selection
+            da = da.assign_coords(time=decoded_times)
         da = da.sel(time=slice(start_n, end_n))
 
-    # Make tidy DataFrame
-    time_index = pd.to_datetime(da["time"].values)
+    # Load data immediately to avoid dask issues with remote OPeNDAP
+    da = da.load()
+    
+    # Make tidy DataFrame - decode times if they're still numeric
+    time_values = da["time"].values
+    if time_values.dtype.kind in ['i', 'f']:  # numeric type
+        # Need to manually decode
+        time_var = da["time"]
+        if hasattr(time_var, 'attrs') and 'units' in time_var.attrs:
+            import xarray.coding.times as xr_times
+            time_index = pd.to_datetime(xr_times.decode_cf_datetime(
+                time_values,
+                units=time_var.attrs.get('units'),
+                calendar=time_var.attrs.get('calendar', 'standard')
+            ))
+        else:
+            time_index = pd.to_datetime(time_values)
+    else:
+        time_index = pd.to_datetime(time_values)
+    
     values = da.values
 
     df = pd.DataFrame({variable: values}, index=time_index)
@@ -194,7 +226,8 @@ def query_geos5fp_point_multi(
     2024-01-01 01:30:00  284.8  0.0081  101330.0
     """
     url = f"{base_url}/{dataset}"
-    ds = xr.open_dataset(url, engine=engine)
+    # Disable caching, locking, and CF decoding to speed up remote OPeNDAP access
+    ds = xr.open_dataset(url, engine=engine, cache=False, lock=False, decode_cf=False)
     
     # Handle longitude convention
     ds_lon = ds["lon"].values
