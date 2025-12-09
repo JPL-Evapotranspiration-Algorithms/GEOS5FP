@@ -24,10 +24,12 @@ def generate_FLiESANN_GEOS5FP_inputs(
     GEOS5FP_connection = GEOS5FP()
 
     # Query for FLiESANN GEOS5FP input variables
+    # Note: Using verbose=True provides reliable progress updates every few seconds
+    # Progress bar mode (verbose=False) can experience hanging issues with remote OPeNDAP queries
     results_df = GEOS5FP_connection.query(
         target_variables=GEOS5FP_INPUTS,
         targets_df=targets_df,
-        verbose=True  # Use verbose mode for progress feedback
+        verbose=True
     )
 
     if update_package_data:

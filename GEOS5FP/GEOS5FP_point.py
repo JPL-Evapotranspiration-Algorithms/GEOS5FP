@@ -123,11 +123,12 @@ def query_geos5fp_point(
             da = da.assign_coords(time=decoded_times)
         da = da.sel(time=slice(start_n, end_n))
 
-    # Load data immediately to avoid dask issues with remote OPeNDAP
-    da = da.load()
+    # Get values directly instead of calling .load() to avoid hanging
+    # This triggers data loading but seems more reliable with remote OPeNDAP
+    values = da.values
+    time_values = da["time"].values
     
     # Make tidy DataFrame - decode times if they're still numeric
-    time_values = da["time"].values
     if time_values.dtype.kind in ['i', 'f']:  # numeric type
         # Need to manually decode
         time_var = da["time"]

@@ -1870,8 +1870,10 @@ class GEOS5FPConnection:
                     total=total_query_batches,
                     desc=f"Querying {len(coord_to_records)} locations",
                     unit="batch",
-                    mininterval=0.5,
-                    smoothing=0.1
+                    mininterval=0,
+                    miniters=1,
+                    dynamic_ncols=True,
+                    smoothing=0
                 )
             
             # Initialize results dictionary indexed by original record index
