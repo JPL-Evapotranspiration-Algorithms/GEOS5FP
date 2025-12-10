@@ -20,6 +20,25 @@ Some variables have multiple names (aliases) that point to the same underlying d
 - `Tmin` and `Tmin_K` → Minimum Temperature
 - `vapor_kgsqm` and `vapor_gccm` → Water Vapor
 - `ozone_dobson` and `ozone_cm` → Ozone
+- `Ca` and `CO2SC` → Atmospheric CO2 Concentration
+
+## Computed Variables
+
+The package automatically computes derived variables from base GEOS-5 FP data:
+
+- **`RH`** - Relative Humidity (computed from Q, PS, Ta)
+- **`Ta_C`** - Air Temperature in Celsius (computed from Ta)
+- **`Ea_Pa`** - Actual Vapor Pressure in Pascals (computed from RH and SVP)
+- **`SVP_Pa`** - Saturated Vapor Pressure in Pascals (computed from Ta)
+- **`VPD_kPa`** - Vapor Pressure Deficit in kPa (computed from SVP and Ea)
+- **`Td_K`** - Dew Point Temperature in Kelvin (computed from Ta and RH)
+- **`wind_speed_mps`** - Wind Speed in m/s (computed from U2M and V2M)
+
+When you query a computed variable, the package automatically:
+1. Identifies the required base variables
+2. Queries them from the appropriate GEOS-5 FP products
+3. Computes the derived variable
+4. Returns only the requested variable (base variables are not included in output)
 
 ## Adding New Variables
 

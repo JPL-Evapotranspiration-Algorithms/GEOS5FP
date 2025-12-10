@@ -24,6 +24,7 @@ ozone_cm,ozone_cm,inst3_2d_asm_Nx,TO3
 U2M,U2M,inst3_2d_asm_Nx,U2M
 V2M,V2M,inst3_2d_asm_Nx,V2M
 CO2SC,CO2SC,tavg3_2d_chm_Nx,CO2SC
+Ca,atmospheric CO2 concentration,tavg3_2d_chm_Nx,CO2SC
 SWin,SWin,tavg1_2d_rad_Nx,SWGNT
 SWTDN,SWTDN,tavg1_2d_rad_Nx,SWTDN
 ALBVISDR,ALBVISDR,tavg1_2d_rad_Nx,ALBVISDR

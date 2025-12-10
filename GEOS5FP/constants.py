@@ -68,4 +68,5 @@ COMPUTED_VARIABLES = {
     'SVP_Pa',  # Saturated Vapor Pressure (computed from Ta)
     'VPD_kPa', # Vapor Pressure Deficit (computed from SVP and Ea)
     'Td_K',    # Dew Point Temperature (computed from Ta and RH)
+    'wind_speed_mps', # Wind speed in m/s (computed from U2M and V2M)
 }
