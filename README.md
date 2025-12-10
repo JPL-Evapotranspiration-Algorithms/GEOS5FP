@@ -63,6 +63,7 @@ Available raster methods include:
 - `LAI()` - Leaf area index
 - `NDVI()` - Normalized difference vegetation index
 - `RH()` - Relative humidity
+- `Ca()` / `CO2SC()` - Atmospheric CO2 concentration (ppmv)
 - And many more (see `variables.csv` for complete list)
 
 ### Generating Table Data
@@ -175,6 +176,31 @@ df = conn.query(
 ```
 
 See `GEOS5FP/variables.csv` for the complete list of available variables and their mappings.
+
+### Computed Variables
+
+The package automatically computes derived meteorological variables from base GEOS-5 FP data. You can query these just like any other variable:
+
+```python
+# Query computed variables
+results = conn.query(
+    target_variables=["wind_speed_mps", "Ta_C", "RH"],
+    time_UTC=time_utc,
+    lat=lat,
+    lon=lon
+)
+```
+
+Available computed variables:
+- **`wind_speed_mps`** - Wind speed in m/s (from U2M and V2M components)
+- **`Ta_C`** - Air temperature in Celsius (from Ta_K)
+- **`RH`** - Relative humidity (from Q, PS, Ta)
+- **`VPD_kPa`** - Vapor pressure deficit in kPa (from SVP and Ea)
+- **`Ea_Pa`** - Actual vapor pressure in Pascals
+- **`SVP_Pa`** - Saturated vapor pressure in Pascals
+- **`Td_K`** - Dew point temperature in Kelvin
+
+The package automatically retrieves only the necessary base variables and returns just the computed results.
 
 ## Data Source & Citation
 

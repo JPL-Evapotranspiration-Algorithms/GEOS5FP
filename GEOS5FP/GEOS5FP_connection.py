@@ -1424,6 +1424,26 @@ class GEOS5FPConnection:
             expected_hours=EXPECTED_HOURS
         )
 
+    def Ca(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+        """
+        Atmospheric CO2 concentration in ppm (parts per million by volume)
+        Alias for CO2SC.
+        :param time_UTC: date/time in UTC
+        :param geometry: optional target geometry
+        :param resampling: optional sampling method for resampling to target geometry
+        :return: raster of CO2 concentration or DataFrame for point queries
+        """
+        result = self.CO2SC(time_UTC, geometry=geometry, resampling=resampling)
+        
+        # Rename CO2SC column to Ca if this is a DataFrame
+        if isinstance(result, pd.DataFrame) and 'CO2SC' in result.columns:
+            result = result.rename(columns={'CO2SC': 'Ca'})
+        # For Raster objects, rename the variable
+        elif hasattr(result, 'rename'):
+            result = result.rename('Ca')
+        
+        return result
+
     def wind_speed(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         """
         wind speed in meters per second
@@ -1889,6 +1909,7 @@ class GEOS5FPConnection:
             computed_dependencies = {
                 'RH': ['Q', 'PS', 'Ta'],  # Need these to compute RH
                 'Ta_C': ['Ta'],  # Need Ta to convert to Celsius
+                'wind_speed_mps': ['U2M', 'V2M'],  # Need wind components to compute speed
             }
             
             for var_name in variable_names:
@@ -2154,6 +2175,16 @@ class GEOS5FPConnection:
                             else:
                                 logger.warning("Cannot compute Ta_C: missing Ta")
                                 result_gdf['Ta_C'] = None
+                        
+                        elif var_name == 'wind_speed_mps':
+                            # Compute wind speed from U2M and V2M components
+                            if 'U2M' in result_gdf.columns and 'V2M' in result_gdf.columns:
+                                U2M = result_gdf['U2M'].values
+                                V2M = result_gdf['V2M'].values
+                                result_gdf['wind_speed_mps'] = np.sqrt(U2M**2 + V2M**2)
+                            else:
+                                logger.warning("Cannot compute wind_speed_mps: missing required variables (U2M, V2M)")
+                                result_gdf['wind_speed_mps'] = None
                         # Add more computed variables as needed
                     except Exception as e:
                         logger.warning(f"Failed to compute {var_name}: {e}")

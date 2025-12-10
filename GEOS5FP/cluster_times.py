@@ -1,6 +1,7 @@
 """
 Utility for clustering time records to optimize query batching.
 """
+import pandas as pd
 
 def cluster_times(records, max_days_per_query=30):
     """
@@ -29,6 +30,11 @@ def cluster_times(records, max_days_per_query=30):
     """
     if not records:
         return []
+    
+    # Ensure all times are datetime objects (convert from Timestamp if needed)
+    for record in records:
+        if isinstance(record['time'], pd.Timestamp):
+            record['time'] = record['time'].to_pydatetime()
     
     # Sort by time
     sorted_records = sorted(records, key=lambda r: r['time'])

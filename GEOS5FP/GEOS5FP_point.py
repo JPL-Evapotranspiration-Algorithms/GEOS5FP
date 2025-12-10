@@ -259,6 +259,19 @@ def query_geos5fp_point_multi(
         start, end = time_range
         start_n = _to_naive_utc(start)
         end_n = _to_naive_utc(end)
+        # With decode_cf=False, time is numeric - need to decode for selection
+        # Decode times for the selection operation
+        import xarray.coding.times as xr_times
+        time_var = pt["time"]
+        if hasattr(time_var, 'attrs') and 'units' in time_var.attrs:
+            # Manually decode time for selection
+            decoded_times = xr_times.decode_cf_datetime(
+                time_var.values,
+                units=time_var.attrs.get('units'),
+                calendar=time_var.attrs.get('calendar', 'standard')
+            )
+            # Create a temporary dataset with decoded times for selection
+            pt = pt.assign_coords(time=decoded_times)
         pt = pt.sel(time=slice(start_n, end_n))
     
     # Convert to DataFrame (xarray does this efficiently for multiple variables)
