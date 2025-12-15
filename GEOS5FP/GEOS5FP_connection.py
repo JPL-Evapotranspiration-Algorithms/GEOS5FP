@@ -1576,6 +1576,38 @@ class GEOS5FPConnection:
             clip_min=0,
             clip_max=1
         )
+    
+    def visible_proportion(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+        """
+        Visible albedo fraction - the proportion of total albedo from the direct visible beam component
+        Formula: visible_proportion = ALBVISDR / ALBEDO
+        Values range from 0 to 1, indicating what fraction of reflected radiation is in the visible band
+        Use this as a scaling factor to convert total albedo to visible albedo: albedo_visible = albedo * visible_proportion
+        :param time_UTC: date/time in UTC
+        :param geometry: optional target geometry
+        :param resampling: optional sampling method for resampling to target geometry
+        :return: raster of visible albedo fraction or DataFrame for point queries
+        """
+        albedo_NWP = self.ALBEDO(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
+        RVIS_NWP = self.ALBVISDR(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
+        visible_proportion = rt.clip(RVIS_NWP / albedo_NWP, 0, 1)
+        return visible_proportion
+    
+    def NIR_proportion(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+        """
+        NIR albedo fraction - the proportion of total albedo from the direct NIR beam component
+        Formula: NIR_proportion = ALBNIRDR / ALBEDO
+        Values range from 0 to 1, indicating what fraction of reflected radiation is in the NIR band
+        Use this as a scaling factor to convert total albedo to NIR albedo: albedo_NIR = albedo * NIR_proportion
+        :param time_UTC: date/time in UTC
+        :param geometry: optional target geometry
+        :param resampling: optional sampling method for resampling to target geometry
+        :return: raster of NIR albedo fraction or DataFrame for point queries
+        """
+        albedo_NWP = self.ALBEDO(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
+        RNIR_NWP = self.ALBNIRDR(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
+        NIR_proportion = rt.clip(RNIR_NWP / albedo_NWP, 0, 1)
+        return NIR_proportion
 
     def query(
             self,
@@ -1910,6 +1942,8 @@ class GEOS5FPConnection:
                 'RH': ['Q', 'PS', 'Ta'],  # Need these to compute RH
                 'Ta_C': ['Ta'],  # Need Ta to convert to Celsius
                 'wind_speed_mps': ['U2M', 'V2M'],  # Need wind components to compute speed
+                'albedo_visible': ['ALBEDO', 'ALBVISDR'],  # Need total albedo and visible direct albedo
+                'albedo_NIR': ['ALBEDO', 'ALBNIRDR'],  # Need total albedo and NIR direct albedo
             }
             
             for var_name in variable_names:
@@ -2185,6 +2219,26 @@ class GEOS5FPConnection:
                             else:
                                 logger.warning("Cannot compute wind_speed_mps: missing required variables (U2M, V2M)")
                                 result_gdf['wind_speed_mps'] = None
+                        
+                        elif var_name == 'albedo_visible':
+                            # Compute visible albedo scaling factor (ALBEDO / ALBVISDR)
+                            if 'ALBEDO' in result_gdf.columns and 'ALBVISDR' in result_gdf.columns:
+                                ALBEDO = result_gdf['ALBEDO'].values
+                                ALBVISDR = result_gdf['ALBVISDR'].values
+                                result_gdf['albedo_visible'] = ALBEDO / ALBVISDR
+                            else:
+                                logger.warning("Cannot compute albedo_visible: missing required variables (ALBEDO, ALBVISDR)")
+                                result_gdf['albedo_visible'] = None
+                        
+                        elif var_name == 'albedo_NIR':
+                            # Compute NIR albedo scaling factor (ALBEDO / ALBNIRDR)
+                            if 'ALBEDO' in result_gdf.columns and 'ALBNIRDR' in result_gdf.columns:
+                                ALBEDO = result_gdf['ALBEDO'].values
+                                ALBNIRDR = result_gdf['ALBNIRDR'].values
+                                result_gdf['albedo_NIR'] = ALBEDO / ALBNIRDR
+                            else:
+                                logger.warning("Cannot compute albedo_NIR: missing required variables (ALBEDO, ALBNIRDR)")
+                                result_gdf['albedo_NIR'] = None
                         # Add more computed variables as needed
                     except Exception as e:
                         logger.warning(f"Failed to compute {var_name}: {e}")
