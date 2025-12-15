@@ -69,4 +69,6 @@ COMPUTED_VARIABLES = {
     'VPD_kPa', # Vapor Pressure Deficit (computed from SVP and Ea)
     'Td_K',    # Dew Point Temperature (computed from Ta and RH)
     'wind_speed_mps', # Wind speed in m/s (computed from U2M and V2M)
+    'visible_proportion', # Visible albedo fraction (computed from ALBVISDR / ALBEDO)
+    'NIR_proportion', # NIR albedo fraction (computed from ALBNIRDR / ALBEDO)
 }
