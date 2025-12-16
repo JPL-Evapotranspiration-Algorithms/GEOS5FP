@@ -225,7 +225,7 @@ Available computed variables:
 | `Ea_Pa` | Actual vapor pressure | RH, SVP_Pa | Pa |
 | `VPD_kPa` | Vapor pressure deficit | SVP_Pa, Ea_Pa | kPa |
 | `Td_K` | Dew point temperature | Ta, RH | K |
-| `visible_proportion` | Visible albedo fraction | ALBVISDR, ALBEDO | fraction |
+| `PAR_proportion` | PAR albedo fraction | ALBVISDR, ALBEDO | fraction |
 | `NIR_proportion` | NIR albedo fraction | ALBNIRDR, ALBEDO | fraction |
 
 The package automatically retrieves only the necessary base variables and returns just the computed results.
@@ -300,7 +300,7 @@ The package provides access to a comprehensive set of GEOS-5 FP variables, organ
 | `ALBVISDF` | Diffuse beam visible surface albedo | fraction | tavg1_2d_rad_Nx |
 | `ALBNIRDR` | Direct beam NIR surface albedo | fraction | tavg1_2d_rad_Nx |
 | `ALBNIRDF` | Diffuse beam NIR surface albedo | fraction | tavg1_2d_rad_Nx |
-| `visible_proportion` | Visible albedo fraction (computed) | fraction | - |
+| `PAR_proportion` | PAR albedo fraction (computed) | fraction | - |
 | `NIR_proportion` | NIR albedo fraction (computed) | fraction | - |
 
 ### Variable Aliases

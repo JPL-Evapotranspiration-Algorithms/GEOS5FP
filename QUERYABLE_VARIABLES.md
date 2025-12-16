@@ -193,7 +193,7 @@ These variables are automatically calculated from base GEOS-5 FP variables. When
 
 | Variable Name | Description | Formula | Units |
 |--------------|-------------|---------|-------|
-| `visible_proportion` | Visible albedo fraction | `ALBVISDR / ALBEDO` | fraction |
+| `PAR_proportion` | PAR albedo fraction | `ALBVISDR / ALBEDO` | fraction |
 | `NIR_proportion` | NIR albedo fraction | `ALBNIRDR / ALBEDO` | fraction |
 
 **Usage Example:**
@@ -202,14 +202,14 @@ These variables are automatically calculated from base GEOS-5 FP variables. When
 # These proportions can be used as scaling factors
 # to derive component albedos from total albedo
 result = conn.query(
-    ["ALBEDO", "visible_proportion"],
+    ["ALBEDO", "PAR_proportion"],
     time_UTC=datetime(2024, 11, 15, 12),
     lat=34.05,
     lon=-118.25
 )
 
 # Calculate visible albedo
-albedo_visible = result['ALBEDO'] * result['visible_proportion']
+albedo_PAR = result['ALBEDO'] * result['PAR_proportion']
 ```
 
 ## Variable Aliases
@@ -325,7 +325,7 @@ result = conn.query(
         "ALBEDO",
         "ALBVISDR", "ALBVISDF",
         "ALBNIRDR", "ALBNIRDF",
-        "visible_proportion", "NIR_proportion"
+        "PAR_proportion", "NIR_proportion"
     ],
     time_UTC=datetime(2024, 11, 15, 12),
     lat=34.05,
