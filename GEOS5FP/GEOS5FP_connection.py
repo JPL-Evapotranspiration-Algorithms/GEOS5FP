@@ -1577,21 +1577,21 @@ class GEOS5FPConnection:
             clip_max=1
         )
     
-    def visible_proportion(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def PAR_proportion(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
         """
-        Visible albedo fraction - the proportion of total albedo from the direct visible beam component
-        Formula: visible_proportion = ALBVISDR / ALBEDO
-        Values range from 0 to 1, indicating what fraction of reflected radiation is in the visible band
-        Use this as a scaling factor to convert total albedo to visible albedo: albedo_visible = albedo * visible_proportion
+        PAR albedo fraction - the proportion of total albedo from the direct PAR beam component
+        Formula: PAR_proportion = ALBVISDR / ALBEDO
+        Values range from 0 to 1, indicating what fraction of reflected radiation is in the PAR band
+        Use this as a scaling factor to convert total albedo to PAR albedo: albedo_PAR = albedo * PAR_proportion
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of visible albedo fraction or DataFrame for point queries
+        :return: raster of PAR albedo fraction or DataFrame for point queries
         """
         albedo_NWP = self.ALBEDO(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         RVIS_NWP = self.ALBVISDR(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-        visible_proportion = rt.clip(RVIS_NWP / albedo_NWP, 0, 1)
-        return visible_proportion
+        PAR_proportion = rt.clip(RVIS_NWP / albedo_NWP, 0, 1)
+        return PAR_proportion
     
     def NIR_proportion(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
         """
