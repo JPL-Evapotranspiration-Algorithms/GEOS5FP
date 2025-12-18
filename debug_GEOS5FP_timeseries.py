@@ -11,7 +11,9 @@ Error: Cannot convert input [pandas Series of timestamps] to Timestamp
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from GEOS5FP import GEOS5FP_connection
+import traceback
+from shapely.geometry import Point
+from GEOS5FP import GEOS5FPConnection
 
 def test_single_timestamp():
     """Test GEOS5FP with a single timestamp - this should work"""
@@ -19,27 +21,30 @@ def test_single_timestamp():
     print("TEST 1: Single timestamp (should work)")
     print("=" * 80)
     
-    connection = GEOS5FP_connection()
+    connection = GEOS5FPConnection()
     
     # Single point and time
     lat = 31.8214
     lon = -110.8661
     time_UTC = pd.Timestamp('2019-10-02 17:09:40')
+    geometry = Point(lon, lat)
     
     print(f"Latitude: {lat}")
     print(f"Longitude: {lon}")
     print(f"Time UTC: {time_UTC}")
     print(f"Time type: {type(time_UTC)}")
+    print(f"Geometry: {geometry}")
     
     try:
         COT = connection.COT(
             time_UTC=time_UTC,
-            lat=lat,
-            lon=lon
+            geometry=geometry
         )
         print(f"✓ SUCCESS: COT = {COT}")
     except Exception as e:
         print(f"✗ FAILED: {e}")
+        print("\nFull traceback:")
+        traceback.print_exc()
     
     print()
 
@@ -50,7 +55,7 @@ def test_series_timestamp():
     print("TEST 2: Series of timestamps (reproduces error)")
     print("=" * 80)
     
-    connection = GEOS5FP_connection()
+    connection = GEOS5FPConnection()
     
     # Create a Series of timestamps (mimics what happens with row_wise=False)
     times = pd.Series([
@@ -65,21 +70,24 @@ def test_series_timestamp():
     # Single point but series of times
     lat = 31.8214
     lon = -110.8661
+    geometry = Point(lon, lat)
     
     print(f"Latitude: {lat}")
     print(f"Longitude: {lon}")
+    print(f"Geometry: {geometry}")
     print(f"Time UTC type: {type(time_UTC)}")
     print(f"Time UTC:\n{time_UTC}")
     
     try:
         COT = connection.COT(
             time_UTC=time_UTC,
-            lat=lat,
-            lon=lon
+            geometry=geometry
         )
         print(f"✓ SUCCESS: COT = {COT}")
     except Exception as e:
         print(f"✗ FAILED: {type(e).__name__}: {e}")
+        print("\nFull traceback:")
+        traceback.print_exc()
     
     print()
 
@@ -90,7 +98,7 @@ def test_arrays_of_data():
     print("TEST 3: Arrays of lat/lon/time (expected vectorized use case)")
     print("=" * 80)
     
-    connection = GEOS5FP_connection()
+    connection = GEOS5FPConnection()
     
     # Multiple points and times (what row_wise=False should produce)
     lats = np.array([31.8214, 45.7624, 43.9397, 44.3233, 35.803])
@@ -102,21 +110,25 @@ def test_arrays_of_data():
         '2019-06-30 13:44:10',
         '2019-07-01 12:53:48'
     ])
+    # Create array of Point geometries
+    geometries = [Point(lon, lat) for lon, lat in zip(lons, lats)]
     
     print(f"Latitudes: {lats}")
     print(f"Longitudes: {lons}")
+    print(f"Geometries: {geometries}")
     print(f"Times type: {type(times)}")
     print(f"Times:\n{times}")
     
     try:
         COT = connection.COT(
             time_UTC=times,
-            lat=lats,
-            lon=lons
+            geometry=geometries
         )
         print(f"✓ SUCCESS: COT = {COT}")
     except Exception as e:
         print(f"✗ FAILED: {type(e).__name__}: {e}")
+        print("\nFull traceback:")
+        traceback.print_exc()
     
     print()
 
@@ -127,7 +139,7 @@ def test_dataframe_scenario():
     print("TEST 4: DataFrame scenario (mimics cal/val table)")
     print("=" * 80)
     
-    connection = GEOS5FP_connection()
+    connection = GEOS5FPConnection()
     
     # Create a mini cal/val table
     df = pd.DataFrame({
@@ -143,6 +155,9 @@ def test_dataframe_scenario():
         ])
     })
     
+    # Create geometry column with Points
+    df['geometry'] = [Point(lon, lat) for lon, lat in zip(df['lon'], df['lat'])]
+    
     print("DataFrame:")
     print(df)
     print()
@@ -150,19 +165,20 @@ def test_dataframe_scenario():
     # This is what happens when row_wise=False and entire columns are passed
     print("Attempting to query with entire DataFrame columns:")
     print(f"  time_UTC type: {type(df['time_UTC'])}")
-    print(f"  lat type: {type(df['lat'])}")
-    print(f"  lon type: {type(df['lon'])}")
+    print(f"  geometry type: {type(df['geometry'])}")
+    print(f"  First geometry: {df['geometry'].iloc[0]}")
     
     try:
         COT = connection.COT(
             time_UTC=df['time_UTC'],
-            lat=df['lat'],
-            lon=df['lon']
+            geometry=df['geometry'].tolist()
         )
         print(f"✓ SUCCESS: COT =\n{COT}")
     except Exception as e:
         print(f"✗ FAILED: {type(e).__name__}: {e}")
         print("\nThis is the error we're seeing in the actual code!")
+        print("\nFull traceback:")
+        traceback.print_exc()
     
     print()
 
