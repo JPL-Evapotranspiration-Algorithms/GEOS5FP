@@ -613,6 +613,91 @@ class GEOS5FPConnection:
         --------
         query : More flexible query method supporting multiple variables and time ranges
         """
+        # Handle pandas Series or array-like time_UTC inputs
+        if isinstance(time_UTC, (pd.Series, list, tuple, np.ndarray)):
+            logger.info(f"Processing {len(time_UTC)} time values for variable {variable_name}")
+            
+            # Convert to pandas Series if not already
+            if not isinstance(time_UTC, pd.Series):
+                time_series = pd.Series(time_UTC)
+            else:
+                time_series = time_UTC
+            
+            # Handle geometry - can be array-like or single geometry
+            if hasattr(geometry, '__len__') and not isinstance(geometry, (str, RasterGeometry)):
+                # geometry is array-like (e.g., GeometryArray, list of Points)
+                if len(time_series) != len(geometry):
+                    raise ValueError(
+                        f"Length mismatch: time_UTC has {len(time_series)} values "
+                        f"but geometry has {len(geometry)} elements"
+                    )
+                
+                # Process each (time, geometry) pair
+                results = []
+                for idx, (time_val, geom_val) in enumerate(zip(time_series, geometry)):
+                    logger.info(f"Processing pair {idx+1}/{len(time_series)}: time={time_val}, geometry={geom_val}")
+                    result = self.variable(
+                        variable_name=variable_name,
+                        time_UTC=time_val,
+                        geometry=geom_val,
+                        resampling=resampling,
+                        interval=interval,
+                        expected_hours=expected_hours,
+                        min_value=min_value,
+                        max_value=max_value,
+                        exclude_values=exclude_values,
+                        cmap=cmap,
+                        clip_min=clip_min,
+                        clip_max=clip_max
+                    )
+                    results.append(result)
+                
+                # Combine results
+                if all(isinstance(r, pd.DataFrame) for r in results):
+                    # Concatenate DataFrames
+                    combined = pd.concat(results, ignore_index=True)
+                    return combined
+                elif all(isinstance(r, (Raster, np.ndarray)) for r in results):
+                    # Stack rasters
+                    return np.array(results)
+                else:
+                    # Mixed types - return as list
+                    return results
+            else:
+                # Single geometry for all times - process each unique time
+                unique_times = time_series.unique()
+                time_to_result = {}
+                
+                for unique_time in unique_times:
+                    logger.info(f"Processing unique time: {unique_time}")
+                    result = self.variable(
+                        variable_name=variable_name,
+                        time_UTC=unique_time,
+                        geometry=geometry,
+                        resampling=resampling,
+                        interval=interval,
+                        expected_hours=expected_hours,
+                        min_value=min_value,
+                        max_value=max_value,
+                        exclude_values=exclude_values,
+                        cmap=cmap,
+                        clip_min=clip_min,
+                        clip_max=clip_max
+                    )
+                    time_to_result[unique_time] = result
+                
+                # Map results back to original time series
+                results = [time_to_result[t] for t in time_series]
+                
+                # Combine results
+                if all(isinstance(r, pd.DataFrame) for r in results):
+                    combined = pd.concat(results, ignore_index=True)
+                    return combined
+                elif all(isinstance(r, (Raster, np.ndarray)) for r in results):
+                    return np.array(results)
+                else:
+                    return results
+        
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
             
