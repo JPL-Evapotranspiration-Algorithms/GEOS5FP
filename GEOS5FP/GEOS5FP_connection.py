@@ -613,8 +613,8 @@ class GEOS5FPConnection:
         --------
         query : More flexible query method supporting multiple variables and time ranges
         """
-        # Handle pandas Series or array-like time_UTC inputs
-        if isinstance(time_UTC, (pd.Series, list, tuple, np.ndarray)):
+        # Handle pandas Series, DatetimeIndex, or array-like time_UTC inputs
+        if isinstance(time_UTC, (pd.Series, pd.DatetimeIndex, list, tuple, np.ndarray)):
             logger.info(f"Processing {len(time_UTC)} time values for variable {variable_name}")
             
             # Convert to pandas Series if not already
