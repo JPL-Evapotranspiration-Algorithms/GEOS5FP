@@ -517,6 +517,7 @@ class GEOS5FPConnection:
         search_date = time_UTC.date()
         logger.info(f"searching GEOS-5 FP {cl.name(product)} at " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M:%S} UTC"))
 
+        logger.info(f"listing available {product} files for {search_date}...")
         product_listing = self.product_listing(
             search_date,
             product,
@@ -530,15 +531,19 @@ class GEOS5FPConnection:
         if len(product_listing) == 0:
             raise IOError(f"no {product} files found for {time_UTC}")
 
+        logger.info(f"found {len(product_listing)} {product} files, finding bracketing times...")
         before_listing = product_listing[product_listing.time_UTC < time_UTC]
 
         if len(before_listing) == 0:
             raise IOError(f"no {product} files found preceeding {time_UTC}")
 
         before_time_UTC, before_URL = before_listing.iloc[-1][["time_UTC", "URL"]]
+        logger.info(f"before time: {cl.time(f'{before_time_UTC:%Y-%m-%d %H:%M} UTC')}")
+        
         after_listing = product_listing[product_listing.time_UTC > time_UTC]
 
         if len(after_listing) == 0:
+            logger.info(f"no after files in current day, checking next day...")
             after_listing = self.product_listing(
                 search_date + timedelta(days=1),
                 product,
@@ -551,7 +556,12 @@ class GEOS5FPConnection:
             # raise IOError(f"no {product} files found after {time_UTC}")
 
         after_time_UTC, after_URL = after_listing.iloc[0][["time_UTC", "URL"]]
+        logger.info(f"after time: {cl.time(f'{after_time_UTC:%Y-%m-%d %H:%M} UTC')}")
+        
+        logger.info(f"downloading/loading before granule...")
         before_granule = self.download_file(before_URL)
+        
+        logger.info(f"downloading/loading after granule...")
         after_granule = self.download_file(after_URL)
 
         return before_granule, after_granule
@@ -615,6 +625,8 @@ class GEOS5FPConnection:
         """
         # Handle pandas Series, DatetimeIndex, or array-like time_UTC inputs
         if isinstance(time_UTC, (pd.Series, pd.DatetimeIndex, list, tuple, np.ndarray)):
+            from time import time as current_time
+            
             logger.info(f"Processing {len(time_UTC)} time values for variable {variable_name}")
             
             # Convert to pandas Series if not already
@@ -632,10 +644,30 @@ class GEOS5FPConnection:
                         f"but geometry has {len(geometry)} elements"
                     )
                 
-                # Process each (time, geometry) pair
+                # Process each (time, geometry) pair with progress tracking
                 results = []
+                start_time = current_time()
+                total_pairs = len(time_series)
+                
                 for idx, (time_val, geom_val) in enumerate(zip(time_series, geometry)):
-                    logger.info(f"Processing pair {idx+1}/{len(time_series)}: time={time_val}, geometry={geom_val}")
+                    # Calculate ETA
+                    if idx > 0:
+                        elapsed = current_time() - start_time
+                        avg_time = elapsed / idx
+                        remaining = total_pairs - idx
+                        eta_seconds = avg_time * remaining
+                        
+                        if eta_seconds < 60:
+                            eta_str = f"{eta_seconds:.0f}s"
+                        elif eta_seconds < 3600:
+                            eta_str = f"{eta_seconds/60:.1f}m"
+                        else:
+                            eta_str = f"{eta_seconds/3600:.1f}h"
+                        
+                        logger.info(f"Processing pair {idx+1}/{total_pairs} [{100*idx/total_pairs:.1f}%]: time={time_val}, geometry={geom_val} (ETA: {eta_str})")
+                    else:
+                        logger.info(f"Processing pair {idx+1}/{total_pairs}: time={time_val}, geometry={geom_val}")
+                    
                     result = self.variable(
                         variable_name=variable_name,
                         time_UTC=time_val,
@@ -652,6 +684,8 @@ class GEOS5FPConnection:
                     )
                     results.append(result)
                 
+                logger.info(f"Completed processing {total_pairs} pairs in {current_time() - start_time:.1f}s")
+                
                 # Combine results
                 if all(isinstance(r, pd.DataFrame) for r in results):
                     # Concatenate DataFrames
@@ -664,12 +698,33 @@ class GEOS5FPConnection:
                     # Mixed types - return as list
                     return results
             else:
-                # Single geometry for all times - process each unique time
+                # Single geometry for all times - process each unique time with progress tracking
                 unique_times = time_series.unique()
                 time_to_result = {}
+                start_time = current_time()
+                total_unique = len(unique_times)
                 
-                for unique_time in unique_times:
-                    logger.info(f"Processing unique time: {unique_time}")
+                logger.info(f"Processing {total_unique} unique timestamps out of {len(time_series)} total values")
+                
+                for idx, unique_time in enumerate(unique_times):
+                    # Calculate ETA
+                    if idx > 0:
+                        elapsed = current_time() - start_time
+                        avg_time = elapsed / idx
+                        remaining = total_unique - idx
+                        eta_seconds = avg_time * remaining
+                        
+                        if eta_seconds < 60:
+                            eta_str = f"{eta_seconds:.0f}s"
+                        elif eta_seconds < 3600:
+                            eta_str = f"{eta_seconds/60:.1f}m"
+                        else:
+                            eta_str = f"{eta_seconds/3600:.1f}h"
+                        
+                        logger.info(f"Processing timestamp {idx+1}/{total_unique} [{100*idx/total_unique:.1f}%]: {unique_time} (ETA: {eta_str})")
+                    else:
+                        logger.info(f"Processing timestamp {idx+1}/{total_unique}: {unique_time}")
+                    
                     result = self.variable(
                         variable_name=variable_name,
                         time_UTC=unique_time,
@@ -686,7 +741,10 @@ class GEOS5FPConnection:
                     )
                     time_to_result[unique_time] = result
                 
+                logger.info(f"Completed processing {total_unique} unique timestamps in {current_time() - start_time:.1f}s")
+                
                 # Map results back to original time series
+                logger.info(f"Mapping results to original {len(time_series)} time series entries")
                 results = [time_to_result[t] for t in time_series]
                 
                 # Combine results
@@ -860,7 +918,7 @@ class GEOS5FPConnection:
                 max_value=max_value,
                 exclude_values=exclude_values
             )
-            logger.info(f"before granule read complete ({t_before.duration:0.2f} seconds)")
+            logger.info(f"before granule read complete ({t_before.duration:.2f} seconds)")
 
             logger.info(f"reading after granule: {cl.file(after_granule.filename)}")
             t_after = Timer()
@@ -872,12 +930,14 @@ class GEOS5FPConnection:
                 max_value=max_value,
                 exclude_values=exclude_values
             )
-            logger.info(f"after granule read complete ({t_after.duration:0.2f} seconds)")
+            logger.info(f"after granule read complete ({t_after.duration:.2f} seconds)")
 
+            logger.info(f"computing temporal interpolation...")
             time_fraction = (time_UTC - before_granule.time_UTC) / (after_granule.time_UTC - before_granule.time_UTC)
             source_diff = after - before
             interpolated_data = before + source_diff * time_fraction
-            logger.info(f"GEOS-5 FP interpolation complete ({timer:0.2f} seconds)")
+            logger.info(f"GEOS-5 FP interpolation complete ({timer.duration:.2f} seconds total)")
+
 
         before_filename = before_granule.filename
         after_filename = after_granule.filename
