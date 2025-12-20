@@ -57,7 +57,9 @@ class GEOS5FPConnection:
             download_directory: str = None,
             remote: str = None,
             save_products: bool = False,
-            verbose: bool = True):
+            verbose: bool = True,
+            use_opendap: bool = True,
+            allow_fallback: bool = False):
         # working_directory logic removed
 
         # working_directory expansion logic removed
@@ -79,6 +81,8 @@ class GEOS5FPConnection:
         self.filenames = set([])
         self.save_products = save_products
         self.verbose = verbose
+        self.use_opendap = use_opendap and HAS_OPENDAP_SUPPORT
+        self.allow_fallback = allow_fallback
 
     def __repr__(self):
         display_dict = {
@@ -763,79 +767,59 @@ class GEOS5FPConnection:
         
         # Check if this is a point query
         if is_point_geometry(geometry):
-            if not HAS_OPENDAP_SUPPORT:
-                raise ImportError(
-                    "Point query support requires xarray and netCDF4. "
-                    "Install with: conda install -c conda-forge xarray netcdf4"
+            # Skip OPeNDAP if disabled or not available
+            if not self.use_opendap:
+                logger.info(f"OPeNDAP disabled, using standard interpolation for point query")
+            elif not HAS_OPENDAP_SUPPORT:
+                logger.warning(
+                    "Point query requires xarray and netCDF4. "
+                    "Install with: conda install -c conda-forge xarray netcdf4. "
+                    "Falling back to standard interpolation."
                 )
+            else:
+                # Try OPeNDAP point query
+                try:
+                    return self._query_point_via_opendap(
+                        NAME, PRODUCT, VARIABLE, variable_name, 
+                        time_UTC, geometry, resampling, interval, 
+                        expected_hours, min_value, max_value, 
+                        exclude_values, cmap, clip_min, clip_max
+                    )
+                except Exception as e:
+                    if self.allow_fallback:
+                        logger.warning(f"OPeNDAP point query failed: {e}")
+                        logger.info("Falling back to standard interpolation method")
+                    else:
+                        logger.error(f"OPeNDAP point query failed: {e}")
+                        logger.error("Fallback to file download is disabled. Set allow_fallback=True to enable.")
+                        raise
             
+            # Fallback to standard interpolation for point queries (only if allow_fallback=True)
             logger.info(
-                f"retrieving {cl.name(NAME)} time-series "
+                f"retrieving {cl.name(NAME)} "
                 f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-                "at point location(s)"
+                "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC") +
+                " using interpolation method"
             )
             
-            points = extract_points(geometry)
-            dfs = []
+            result = self.interpolate(
+                time_UTC=time_UTC,
+                product=PRODUCT,
+                variable=VARIABLE,
+                geometry=geometry,
+                resampling=resampling,
+                interval=interval,
+                expected_hours=expected_hours,
+                min_value=min_value,
+                max_value=max_value,
+                exclude_values=exclude_values,
+                cmap=cmap
+            )
             
-            # OPeNDAP uses lowercase variable names
-            variable_opendap = VARIABLE.lower()
-            
-            for lat, lon in points:
-                try:
-                    # For single time point, query a small window around the time
-                    # to ensure we get the nearest available timestep
-                    time_window_start = time_UTC - timedelta(hours=2)
-                    time_window_end = time_UTC + timedelta(hours=2)
-                    
-                    result = query_geos5fp_point(
-                        dataset=PRODUCT,
-                        variable=variable_opendap,
-                        lat=lat,
-                        lon=lon,
-                        time_range=(time_window_start, time_window_end),
-                        dropna=True
-                    )
-                    
-                    if len(result.df) == 0:
-                        logger.warning(f"No data found for point ({lat}, {lon}) near {time_UTC}")
-                        continue
-                    
-                    # Find the closest time to our target
-                    time_diffs = abs(result.df.index - time_UTC)
-                    closest_idx = time_diffs.argmin()
-                    df_point = result.df.iloc[[closest_idx]].copy()
-                    
-                    df_point['lat'] = lat
-                    df_point['lon'] = lon
-                    df_point['lat_used'] = result.lat_used
-                    df_point['lon_used'] = result.lon_used
-                    dfs.append(df_point)
-                except Exception as e:
-                    logger.warning(f"Failed to query point ({lat}, {lon}): {e}")
-                    
-            if not dfs:
-                raise ValueError("No successful point queries")
-            
-            result_df = pd.concat(dfs, ignore_index=False)
-            # Rename from OPeNDAP variable name to our standard variable name
-            result_df = result_df.rename(columns={variable_opendap: variable_name})
-            
-            # Apply transformation if defined for this variable
-            if variable_name in VARIABLE_TRANSFORMATIONS:
-                result_df[variable_name] = result_df[variable_name].apply(VARIABLE_TRANSFORMATIONS[variable_name])
-            
-            # Apply clipping if specified
             if clip_min is not None or clip_max is not None:
-                result_df[variable_name] = result_df[variable_name].clip(lower=clip_min, upper=clip_max)
-            
-            # Ensure geometry column is at the end if present
-            if 'geometry' in result_df.columns:
-                cols = [c for c in result_df.columns if c != 'geometry']
-                cols.append('geometry')
-                result_df = result_df[cols]
-            
-            return result_df
+                result = rt.clip(result, clip_min, clip_max)
+                
+            return result
         
         # Regular raster query
         logger.info(
@@ -862,6 +846,118 @@ class GEOS5FPConnection:
             result = rt.clip(result, clip_min, clip_max)
             
         return result
+
+    def _query_point_via_opendap(
+            self,
+            NAME: str,
+            PRODUCT: str,
+            VARIABLE: str,
+            variable_name: str,
+            time_UTC: datetime,
+            geometry: Any,
+            resampling: str,
+            interval: int,
+            expected_hours: List[float],
+            min_value: Any,
+            max_value: Any,
+            exclude_values: Any,
+            cmap: Any,
+            clip_min: Any,
+            clip_max: Any) -> pd.DataFrame:
+        """Query point(s) via OPeNDAP with fallback to interpolation."""
+        if not HAS_OPENDAP_SUPPORT:
+            raise ImportError(
+                "Point query support requires xarray and netCDF4. "
+                "Install with: conda install -c conda-forge xarray netcdf4"
+            )
+        
+        logger.info(
+            f"retrieving {cl.name(NAME)} time-series "
+            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
+            "at point location(s)"
+        )
+        
+        points = extract_points(geometry)
+        dfs = []
+        
+        # OPeNDAP uses lowercase variable names
+        variable_opendap = VARIABLE.lower()
+        
+        # Track failed points for fallback
+        failed_points = []
+        
+        for lat, lon in points:
+            try:
+                # For single time point, query a small window around the time
+                # to ensure we get the nearest available timestep
+                time_window_start = time_UTC - timedelta(hours=2)
+                time_window_end = time_UTC + timedelta(hours=2)
+                
+                result = query_geos5fp_point(
+                    dataset=PRODUCT,
+                    variable=variable_opendap,
+                    lat=lat,
+                    lon=lon,
+                    time_range=(time_window_start, time_window_end),
+                    dropna=True,
+                    retries=5,
+                    retry_delay=15.0
+                )
+                
+                if len(result.df) == 0:
+                    logger.warning(f"No data found for point ({lat}, {lon}) near {time_UTC}")
+                    failed_points.append((lat, lon))
+                    continue
+                
+                # Find the closest time to our target
+                time_diffs = abs(result.df.index - time_UTC)
+                closest_idx = time_diffs.argmin()
+                df_point = result.df.iloc[[closest_idx]].copy()
+                
+                df_point['lat'] = lat
+                df_point['lon'] = lon
+                df_point['lat_used'] = result.lat_used
+                df_point['lon_used'] = result.lon_used
+                dfs.append(df_point)
+            except Exception as e:
+                logger.warning(f"Failed to query point ({lat}, {lon}) via OPeNDAP: {e}")
+                failed_points.append((lat, lon))
+        
+        # Report failed points but don't fall back to file downloads
+        if failed_points and len(dfs) == 0:
+            raise ValueError(
+                f"OPeNDAP queries failed for all {len(points)} points. "
+                f"No data retrieved. Set allow_fallback=True to enable fallback to file download."
+            )
+        elif failed_points:
+            logger.warning(
+                f"OPeNDAP queries failed for {len(failed_points)} out of {len(points)} points. "
+                f"Returning data for {len(dfs)} successful points only. "
+                f"Set allow_fallback=True to retry failed points via file download."
+            )
+        
+        if not dfs:
+            raise ValueError(f"No successful point queries for any of {len(points)} points")
+        
+        result_df = pd.concat(dfs, ignore_index=False)
+        # Rename from OPeNDAP variable name to our standard variable name
+        result_df = result_df.rename(columns={variable_opendap: variable_name})
+        
+        # Apply transformation if defined for this variable
+        if variable_name in VARIABLE_TRANSFORMATIONS:
+            result_df[variable_name] = result_df[variable_name].apply(VARIABLE_TRANSFORMATIONS[variable_name])
+        
+        # Apply clipping if specified
+        if clip_min is not None or clip_max is not None:
+            result_df[variable_name] = result_df[variable_name].clip(lower=clip_min, upper=clip_max)
+        
+        # Ensure geometry column is at the end if present
+        if 'geometry' in result_df.columns:
+            cols = [c for c in result_df.columns if c != 'geometry']
+            cols.append('geometry')
+            result_df = result_df[cols]
+        
+        return result_df
 
     def interpolate(
             self,
