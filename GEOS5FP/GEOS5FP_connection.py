@@ -2161,7 +2161,7 @@ class GEOS5FPConnection:
             if not verbose:
                 pbar = tqdm(
                     total=total_query_batches,
-                    desc=f"Querying {len(coord_to_records)} locations",
+                    desc=f"GEOS-5 FP",
                     unit="batch",
                     mininterval=0,
                     miniters=1,
@@ -2316,7 +2316,8 @@ class GEOS5FPConnection:
                         # Update progress bar description to show current batch
                         if pbar is not None:
                             pbar.set_description(
-                                f"Querying batch {batch_num}/{total_query_batches} "
+                                # f"Querying batch {batch_num}/{total_query_batches} "
+                                f"GEOS-5 FP {var_dataset} "
                                 f"({pt_lat:.2f}, {pt_lon:.2f})"
                             )
                             pbar.refresh()
