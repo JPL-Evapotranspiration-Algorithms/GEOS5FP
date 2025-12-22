@@ -15,6 +15,9 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+import logging
+logger = logging.getLogger(__name__)
+
 # Suppress xarray SerializationWarning about ambiguous reference dates in GEOS-5 FP files
 warnings.filterwarnings('ignore', message='.*Ambiguous reference date string.*')
 
@@ -49,9 +52,11 @@ def query_geos5fp_point(
     lon_convention: str = "auto",  # "auto", "neg180_180", "0_360"
     method: str = "nearest",
     dropna: bool = True,
+    retries: int = 3,
+    retry_delay: float = 10.0,
 ) -> PointQueryResult:
     """
-    Point-query a GEOS-5 FP OPeNDAP collection.
+    Point-query a GEOS-5 FP OPeNDAP collection with retry logic.
 
     Parameters
     ----------
@@ -72,93 +77,174 @@ def query_geos5fp_point(
         - "0_360": assume dataset uses [0, 360)
     method : str
         Selection method for lat/lon (usually "nearest").
+    retries : int
+        Number of retry attempts for failed queries (default: 3)
+    retry_delay : float
+        Delay in seconds between retry attempts (default: 10.0)
 
     Returns
     -------
     PointQueryResult
     """
+    import time
+    import logging
+    
+    logger = logging.getLogger(__name__)
     url = f"{base_url}/{dataset}"
-    # Disable caching, locking, and CF decoding to speed up remote OPeNDAP access
-    ds = xr.open_dataset(url, engine=engine, cache=False, lock=False, decode_cf=False)
+    
+    last_error = None
+    for attempt in range(retries):
+        try:
+            return _query_geos5fp_point_impl(
+                URL=url,
+                dataset=dataset,
+                variable=variable,
+                lat=lat,
+                lon=lon,
+                time_range=time_range,
+                engine=engine,
+                lon_convention=lon_convention,
+                method=method,
+                dropna=dropna
+            )
+        except Exception as e:
+            last_error = e
+            error_msg = str(e).lower()
+            
+            # Check if it's a timeout or gateway error
+            is_timeout = any(keyword in error_msg for keyword in [
+                'timeout', '504', 'gateway', 'timed out', 'time-out'
+            ])
+            
+            if attempt < retries - 1:
+                if is_timeout:
+                    logger.warning(f"OPeNDAP timeout/gateway error (attempt {attempt + 1}/{retries})")
+                else:
+                    logger.warning(f"OPeNDAP query failed (attempt {attempt + 1}/{retries}): {e}")
+                
+                # Use longer delay for timeout errors
+                delay = retry_delay * 2 if is_timeout else retry_delay
+                logger.info(f"Retrying in {delay:.0f} seconds...")
+                time.sleep(delay)
+            else:
+                logger.error(f"OPeNDAP query failed after {retries} attempts: {e}")
+                raise
+    
+    # Should not reach here, but included for completeness
+    raise last_error if last_error else RuntimeError("Query failed")
 
-    # Handle longitude convention
-    ds_lon = ds["lon"].values
-    ds_min, ds_max = float(np.nanmin(ds_lon)), float(np.nanmax(ds_lon))
 
-    lon_used = lon
-    if lon_convention == "0_360" or (lon_convention == "auto" and ds_max > 180):
-        lon_used = lon % 360
-    elif lon_convention == "neg180_180" or (lon_convention == "auto" and ds_max <= 180):
-        # keep as-is for [-180,180] datasets
-        lon_used = lon
-
-    # Nearest gridpoint
-    pt = ds.sel(lat=lat, lon=lon_used, method=method)
-
-    if variable not in pt:
-        raise KeyError(
-            f"Variable {variable!r} not found in {dataset!r}. "
-            f"Available: {list(pt.data_vars)}"
+def _query_geos5fp_point_impl(
+    URL: str,
+    dataset: str,
+    variable: str,
+    lat: float,
+    lon: float,
+    time_range: Optional[Tuple],
+    engine: str,
+    lon_convention: str,
+    method: str,
+    dropna: bool
+) -> PointQueryResult:
+    """Internal implementation of point query without retry logic."""
+    import socket
+    
+    # Set socket timeout for netCDF4/OPeNDAP operations
+    original_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(120.0)  # 120 second timeout
+    
+    try:
+        logger.info(f"Opening OPeNDAP dataset: {URL}")
+        
+        # Disable caching, locking, and CF decoding to speed up remote OPeNDAP access
+        ds = xr.open_dataset(
+            URL, 
+            engine=engine, 
+            cache=False, 
+            lock=False, 
+            decode_cf=False
         )
 
-    da = pt[variable]
+        # Handle longitude convention
+        ds_lon = ds["lon"].values
+        ds_min, ds_max = float(np.nanmin(ds_lon)), float(np.nanmax(ds_lon))
 
-    # Time slice if requested
-    if time_range is not None:
-        start, end = time_range
-        start_n = _to_naive_utc(start)
-        end_n = _to_naive_utc(end)
-        # With decode_cf=False, time is numeric - need to decode for selection
-        # Decode times for the selection operation
-        import xarray.coding.times as xr_times
-        time_var = da["time"]
-        if hasattr(time_var, 'attrs') and 'units' in time_var.attrs:
-            # Manually decode time for selection
-            decoded_times = xr_times.decode_cf_datetime(
-                time_var.values,
-                units=time_var.attrs.get('units'),
-                calendar=time_var.attrs.get('calendar', 'standard')
+        lon_used = lon
+        if lon_convention == "0_360" or (lon_convention == "auto" and ds_max > 180):
+            lon_used = lon % 360
+        elif lon_convention == "neg180_180" or (lon_convention == "auto" and ds_max <= 180):
+            # keep as-is for [-180,180] datasets
+            lon_used = lon
+
+        # Nearest gridpoint
+        pt = ds.sel(lat=lat, lon=lon_used, method=method)
+
+        if variable not in pt:
+            raise KeyError(
+                f"Variable {variable!r} not found in {dataset!r}. "
+                f"Available: {list(pt.data_vars)}"
             )
-            # Create a temporary DataArray with decoded times for selection
-            da = da.assign_coords(time=decoded_times)
-        da = da.sel(time=slice(start_n, end_n))
 
-    # Get values directly instead of calling .load() to avoid hanging
-    # This triggers data loading but seems more reliable with remote OPeNDAP
-    values = da.values
-    time_values = da["time"].values
-    
-    # Make tidy DataFrame - decode times if they're still numeric
-    if time_values.dtype.kind in ['i', 'f']:  # numeric type
-        # Need to manually decode
-        time_var = da["time"]
-        if hasattr(time_var, 'attrs') and 'units' in time_var.attrs:
+        da = pt[variable]
+
+        # Time slice if requested
+        if time_range is not None:
+            start, end = time_range
+            start_n = _to_naive_utc(start)
+            end_n = _to_naive_utc(end)
+            # With decode_cf=False, time is numeric - need to decode for selection
+            # Decode times for the selection operation
             import xarray.coding.times as xr_times
-            time_index = pd.to_datetime(xr_times.decode_cf_datetime(
-                time_values,
-                units=time_var.attrs.get('units'),
-                calendar=time_var.attrs.get('calendar', 'standard')
-            ))
+            time_var = da["time"]
+            if hasattr(time_var, 'attrs') and 'units' in time_var.attrs:
+                # Manually decode time for selection
+                decoded_times = xr_times.decode_cf_datetime(
+                    time_var.values,
+                    units=time_var.attrs.get('units'),
+                    calendar=time_var.attrs.get('calendar', 'standard')
+                )
+                # Create a temporary DataArray with decoded times for selection
+                da = da.assign_coords(time=decoded_times)
+            da = da.sel(time=slice(start_n, end_n))
+
+        # Load data efficiently - get coordinates first
+        time_values = da["time"].values
+        
+        # Make tidy DataFrame - decode times if they're still numeric
+        if time_values.dtype.kind in ['i', 'f']:  # numeric type
+            # Need to manually decode
+            time_var = da["time"]
+            if hasattr(time_var, 'attrs') and 'units' in time_var.attrs:
+                import xarray.coding.times as xr_times
+                time_index = pd.to_datetime(xr_times.decode_cf_datetime(
+                    time_values,
+                    units=time_var.attrs.get('units'),
+                    calendar=time_var.attrs.get('calendar', 'standard')
+                ))
+            else:
+                time_index = pd.to_datetime(time_values)
         else:
             time_index = pd.to_datetime(time_values)
-    else:
-        time_index = pd.to_datetime(time_values)
-    
-    values = da.values
+        
+        # Get values - do this last to minimize OPeNDAP requests
+        values = da.values
 
-    df = pd.DataFrame({variable: values}, index=time_index)
-    df.index.name = "time"
+        df = pd.DataFrame({variable: values}, index=time_index)
+        df.index.name = "time"
 
-    if dropna:
-        df = df.dropna()
+        if dropna:
+            df = df.dropna()
 
-    return PointQueryResult(
-        data=da,
-        df=df,
-        lat_used=float(pt["lat"].values),
-        lon_used=float(pt["lon"].values),
-        url=url,
-    )
+        return PointQueryResult(
+            data=da,
+            df=df,
+            lat_used=float(pt["lat"].values),
+            lon_used=float(pt["lon"].values),
+            url=URL,
+        )
+    finally:
+        # Restore original socket timeout
+        socket.setdefaulttimeout(original_timeout)
 
 
 def query_geos5fp_point_multi(
