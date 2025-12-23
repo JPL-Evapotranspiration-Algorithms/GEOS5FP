@@ -2073,8 +2073,11 @@ class GEOS5FPConnection:
                     geometries = geometry.tolist()
                 elif isinstance(geometry, list):
                     geometries = geometry
+                elif is_point_geometry(geometry):
+                    # Single geometry - broadcast to all times
+                    geometries = [geometry] * len(times)
                 else:
-                    raise ValueError("For batch queries with geometry, must provide GeoSeries or list")
+                    raise ValueError("For batch queries with geometry, must provide GeoSeries, list, or single Point/MultiPoint")
             elif lat is not None and lon is not None:
                 # Convert lat/lon to Point geometries
                 if isinstance(lat, pd.Series):

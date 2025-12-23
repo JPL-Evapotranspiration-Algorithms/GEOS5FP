@@ -111,7 +111,7 @@ class TestSeriesTimeInput:
         ]
         
         # This should raise a ValueError
-        with pytest.raises(ValueError, match="Length mismatch"):
+        with pytest.raises(ValueError, match="Number of times .* must match number of geometries"):
             connection.COT(time_UTC=times, geometry=geometries)
     
     def test_single_time_still_works(self, connection):
