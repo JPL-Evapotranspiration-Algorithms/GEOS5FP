@@ -1057,9 +1057,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture or DataFrame for point queries
         """
-        return self.variable(
-            "SFMC",
-            time_UTC,
+        return self.query(
+            target_variables="SFMC",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling,
             interval=1,
@@ -1079,9 +1079,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of LAI or DataFrame for point queries
         """
-        return self.variable(
-            "LAI",
-            time_UTC,
+        return self.query(
+            target_variables="LAI",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling,
             interval=1,
@@ -1113,9 +1113,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "LHLAND",
-            time_UTC,
+        return self.query(
+            target_variables="LHLAND",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling,
             interval=1,
@@ -1130,9 +1130,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "EFLUX",
-            time_UTC,
+        return self.query(
+            target_variables="EFLUX",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling,
             interval=1
@@ -1146,9 +1146,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "PARDR",
-            time_UTC,
+        return self.query(
+            target_variables="PARDR",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling,
             clip_min=0
@@ -1162,9 +1162,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of soil moisture or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "PARDF",
-            time_UTC,
+        return self.query(
+            target_variables="PARDF",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling,
             clip_min=0
@@ -1181,9 +1181,9 @@ class GEOS5FPConnection:
         # 1:30, 4:30, 7:30, 10:30, 13:30, 16:30, 19:30, 22:30 UTC
         EXPECTED_HOURS = [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
         
-        return self.variable(
-            "AOT",
-            time_UTC,
+        return self.query(
+            target_variables="AOT",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling,
             expected_hours=EXPECTED_HOURS
@@ -1197,9 +1197,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of COT or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "COT",
-            time_UTC,
+        return self.query(
+            target_variables="COT",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling
         )
@@ -1216,9 +1216,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of Ta or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "Ts_K",
-            time_UTC,
+        return self.query(
+            target_variables="Ts_K",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling
         )
@@ -1249,9 +1249,9 @@ class GEOS5FPConnection:
         
         # If point geometry and no downscaling requested, use simple variable retrieval
         if is_point_geometry(geometry) and ST_K is None:
-            return self.variable(
-                "Ta_K",
-                time_UTC,
+            return self.query(
+                target_variables="Ta_K",
+                time_UTC=time_UTC,
                 geometry=geometry,
                 resampling=resampling
             )
@@ -1323,9 +1323,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of Ta or DataFrame for point queries
         """
-        return self.variable(
-            "Tmin_K",
-            time_UTC,
+        return self.query(
+            target_variables="Tmin_K",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling
         )
@@ -1350,9 +1350,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of surface pressure or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "PS",
-            time_UTC,
+        return self.query(
+            target_variables="PS",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling
         )
@@ -1365,9 +1365,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of Q or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "Q",
-            time_UTC,
+        return self.query(
+            target_variables="Q",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling
         )
@@ -1572,9 +1572,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm or DataFrame for point queries or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "vapor_kgsqm",
-            time_UTC,
+        return self.query(
+            target_variables="vapor_kgsqm",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling,
             clip_min=0
@@ -1598,9 +1598,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "ozone_dobson",
-            time_UTC,
+        return self.query(
+            target_variables="ozone_dobson",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling,
             clip_min=0
@@ -1624,9 +1624,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "U2M",
-            time_UTC,
+        return self.query(
+            target_variables="U2M",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling
         )
@@ -1639,9 +1639,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of vapor_gccm or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "V2M",
-            time_UTC,
+        return self.query(
+            target_variables="V2M",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling
         )
@@ -1657,9 +1657,9 @@ class GEOS5FPConnection:
         # 1:30, 4:30, 7:30, 10:30, 13:30, 16:30, 19:30, 22:30 UTC
         EXPECTED_HOURS = [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
         
-        return self.variable(
-            "CO2SC",
-            time_UTC,
+        return self.query(
+            target_variables="CO2SC",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling,
             expected_hours=EXPECTED_HOURS
@@ -1709,9 +1709,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of SWin or DataFrame for point queries or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "SWin",
-            time_UTC,
+        return self.query(
+            target_variables="SWin",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling,
             clip_min=0
@@ -1725,9 +1725,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of SWin or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "SWTDN",
-            time_UTC,
+        return self.query(
+            target_variables="SWTDN",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling,
             clip_min=0
@@ -1741,9 +1741,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "ALBVISDR",
-            time_UTC,
+        return self.query(
+            target_variables="ALBVISDR",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling,
             clip_min=0,
@@ -1758,9 +1758,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "ALBVISDF",
-            time_UTC,
+        return self.query(
+            target_variables="ALBVISDF",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling,
             clip_min=0,
@@ -1775,9 +1775,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "ALBNIRDF",
-            time_UTC,
+        return self.query(
+            target_variables="ALBNIRDF",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling,
             clip_min=0,
@@ -1792,9 +1792,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "ALBNIRDR",
-            time_UTC,
+        return self.query(
+            target_variables="ALBNIRDR",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling,
             clip_min=0,
@@ -1809,9 +1809,9 @@ class GEOS5FPConnection:
         :param resampling: optional sampling method for resampling to target geometry
         :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
         """
-        return self.variable(
-            "ALBEDO",
-            time_UTC,
+        return self.query(
+            target_variables="ALBEDO",
+            time_UTC=time_UTC,
             geometry=geometry,
             resampling=resampling,
             clip_min=0,
