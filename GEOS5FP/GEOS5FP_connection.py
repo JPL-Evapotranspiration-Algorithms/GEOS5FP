@@ -2582,95 +2582,211 @@ class GEOS5FPConnection:
                         f"for time range {time_range[0]} to {time_range[1]}"
                     )
                 
+                # Determine if we should use temporal chunking
+                # Chunk if: single point AND time range > 7 days
+                time_span = (time_range[1] - time_range[0]).days
+                use_temporal_chunking = len(points) == 1 and time_span > 7
+                chunk_size_days = 7  # Chunk into 7-day periods
+                
+                if use_temporal_chunking:
+                    # Generate temporal chunks
+                    temporal_chunks = []
+                    current_chunk_start = time_range[0]
+                    while current_chunk_start < time_range[1]:
+                        chunk_end = min(
+                            current_chunk_start + timedelta(days=chunk_size_days),
+                            time_range[1]
+                        )
+                        temporal_chunks.append((current_chunk_start, chunk_end))
+                        current_chunk_start = chunk_end
+                    
+                    total_queries = len(temporal_chunks)
+                    query_unit = "chunk"
+                    if verbose:
+                        logger.info(f"  Using temporal chunking: {total_queries} chunks of ~{chunk_size_days} days")
+                else:
+                    # No temporal chunking - use spatial points
+                    temporal_chunks = [time_range]
+                    total_queries = len(points)
+                    query_unit = "point"
+                
                 # Initialize timing for ETA tracking
                 from time import time as current_time
                 query_start_time = current_time()
-                total_points = len(points)
-                completed_points = 0
+                completed_queries = 0
                 
                 # Create progress bar if not verbose
                 pbar = None
                 if not verbose:
                     pbar = tqdm(
-                        total=total_points,
+                        total=total_queries,
                         desc=f"Querying {var_name}",
-                        unit="point"
+                        unit=query_unit
                     )
                 
-                # Query each point for this variable
+                # Query data
                 dfs = []
-                for point_idx, (pt_lat, pt_lon) in enumerate(points, 1):
-                    # Calculate and display ETA
-                    if verbose:
-                        if completed_points > 0:
-                            elapsed_time = current_time() - query_start_time
-                            avg_time_per_point = elapsed_time / completed_points
-                            remaining_points = total_points - completed_points
-                            eta_seconds = avg_time_per_point * remaining_points
-                            
-                            # Format time as human-readable
-                            if eta_seconds < 60:
-                                eta_str = f"{eta_seconds:.0f}s"
-                            elif eta_seconds < 3600:
-                                eta_str = f"{eta_seconds/60:.1f}m"
-                            else:
-                                eta_str = f"{eta_seconds/3600:.1f}h"
-                            
-                            # Format elapsed time
-                            if elapsed_time < 60:
-                                elapsed_str = f"{elapsed_time:.0f}s"
-                            elif elapsed_time < 3600:
-                                elapsed_str = f"{elapsed_time/60:.1f}m"
-                            else:
-                                elapsed_str = f"{elapsed_time/3600:.1f}h"
-                            
-                            logger.info(
-                                f"  Point {point_idx}/{total_points} ({pt_lat:.4f}, {pt_lon:.4f}) - "
-                                f"Elapsed: {elapsed_str}, ETA: {eta_str}"
-                            )
-                        else:
-                            logger.info(f"  Point {point_idx}/{total_points} ({pt_lat:.4f}, {pt_lon:.4f})")
+                
+                if use_temporal_chunking:
+                    # Temporal chunking: iterate through time chunks for single point
+                    pt_lat, pt_lon = points[0]
                     
-                    try:
-                        result = query_geos5fp_point(
-                            dataset=var_dataset,
-                            variable=variable_opendap,
-                            lat=pt_lat,
-                            lon=pt_lon,
-                            time_range=time_range,
-                            dropna=dropna
-                        )
-                        
-                        if len(result.df) == 0:
-                            logger.warning(f"No data found for point ({pt_lat}, {pt_lon})")
-                            continue
-                        
-                        df_point = result.df.copy()
-                        
-                        # Rename from OPeNDAP variable name to requested variable name
-                        if variable_opendap in df_point.columns:
-                            df_point = df_point.rename(columns={variable_opendap: var_name})
-                        
-                        # Add geometry column at the end
-                        df_point['geometry'] = Point(pt_lon, pt_lat)
-                        
-                        dfs.append(df_point)
-                        
-                        # Update completed points counter for ETA
-                        completed_points += 1
-                        
-                        # Update progress bar if not verbose
-                        if pbar is not None:
-                            pbar.update(1)
-                    except Exception as e:
+                    for chunk_idx, (chunk_start, chunk_end) in enumerate(temporal_chunks, 1):
+                        # Calculate and display ETA
                         if verbose:
-                            logger.warning(f"Failed to query point ({pt_lat}, {pt_lon}) for {var_name}: {e}")
-                        # Update completed points counter even for failures
-                        completed_points += 1
+                            if completed_queries > 0:
+                                elapsed_time = current_time() - query_start_time
+                                avg_time_per_query = elapsed_time / completed_queries
+                                remaining_queries = total_queries - completed_queries
+                                eta_seconds = avg_time_per_query * remaining_queries
+                                
+                                # Format time as human-readable
+                                if eta_seconds < 60:
+                                    eta_str = f"{eta_seconds:.0f}s"
+                                elif eta_seconds < 3600:
+                                    eta_str = f"{eta_seconds/60:.1f}m"
+                                else:
+                                    eta_str = f"{eta_seconds/3600:.1f}h"
+                                
+                                # Format elapsed time
+                                if elapsed_time < 60:
+                                    elapsed_str = f"{elapsed_time:.0f}s"
+                                elif elapsed_time < 3600:
+                                    elapsed_str = f"{elapsed_time/60:.1f}m"
+                                else:
+                                    elapsed_str = f"{elapsed_time/3600:.1f}h"
+                                
+                                logger.info(
+                                    f"  Chunk {chunk_idx}/{total_queries} "
+                                    f"({chunk_start.date()} to {chunk_end.date()}) - "
+                                    f"Elapsed: {elapsed_str}, ETA: {eta_str}"
+                                )
+                            else:
+                                logger.info(
+                                    f"  Chunk {chunk_idx}/{total_queries} "
+                                    f"({chunk_start.date()} to {chunk_end.date()})"
+                                )
                         
-                        # Update progress bar if not verbose
-                        if pbar is not None:
-                            pbar.update(1)
+                        try:
+                            # Import locally to avoid scope issues
+                            from GEOS5FP.GEOS5FP_point import query_geos5fp_point
+                            
+                            result = query_geos5fp_point(
+                                dataset=var_dataset,
+                                variable=variable_opendap,
+                                lat=pt_lat,
+                                lon=pt_lon,
+                                time_range=(chunk_start, chunk_end),
+                                dropna=dropna
+                            )
+                            
+                            if len(result.df) > 0:
+                                df_chunk = result.df.copy()
+                                
+                                # Rename from OPeNDAP variable name to requested variable name
+                                if variable_opendap in df_chunk.columns:
+                                    df_chunk = df_chunk.rename(columns={variable_opendap: var_name})
+                                
+                                # Add geometry column at the end
+                                df_chunk['geometry'] = Point(pt_lon, pt_lat)
+                                
+                                dfs.append(df_chunk)
+                            
+                            # Update completed queries counter for ETA
+                            completed_queries += 1
+                            
+                            # Update progress bar if not verbose
+                            if pbar is not None:
+                                pbar.update(1)
+                        except Exception as e:
+                            if verbose:
+                                logger.warning(
+                                    f"Failed to query chunk {chunk_start.date()} to {chunk_end.date()} "
+                                    f"for {var_name}: {e}"
+                                )
+                            # Update completed queries counter even for failures
+                            completed_queries += 1
+                            
+                            # Update progress bar if not verbose
+                            if pbar is not None:
+                                pbar.update(1)
+                else:
+                    # No temporal chunking - iterate through spatial points
+                    for point_idx, (pt_lat, pt_lon) in enumerate(points, 1):
+                        # Calculate and display ETA
+                        if verbose:
+                            if completed_queries > 0:
+                                elapsed_time = current_time() - query_start_time
+                                avg_time_per_query = elapsed_time / completed_queries
+                                remaining_queries = total_queries - completed_queries
+                                eta_seconds = avg_time_per_query * remaining_queries
+                                
+                                # Format time as human-readable
+                                if eta_seconds < 60:
+                                    eta_str = f"{eta_seconds:.0f}s"
+                                elif eta_seconds < 3600:
+                                    eta_str = f"{eta_seconds/60:.1f}m"
+                                else:
+                                    eta_str = f"{eta_seconds/3600:.1f}h"
+                                
+                                # Format elapsed time
+                                if elapsed_time < 60:
+                                    elapsed_str = f"{elapsed_time:.0f}s"
+                                elif elapsed_time < 3600:
+                                    elapsed_str = f"{elapsed_time/60:.1f}m"
+                                else:
+                                    elapsed_str = f"{elapsed_time/3600:.1f}h"
+                                
+                                logger.info(
+                                    f"  Point {point_idx}/{total_queries} ({pt_lat:.4f}, {pt_lon:.4f}) - "
+                                    f"Elapsed: {elapsed_str}, ETA: {eta_str}"
+                                )
+                            else:
+                                logger.info(f"  Point {point_idx}/{total_queries} ({pt_lat:.4f}, {pt_lon:.4f})")
+                        
+                        try:
+                            # Import locally to avoid scope issues
+                            from GEOS5FP.GEOS5FP_point import query_geos5fp_point
+                            
+                            result = query_geos5fp_point(
+                                dataset=var_dataset,
+                                variable=variable_opendap,
+                                lat=pt_lat,
+                                lon=pt_lon,
+                                time_range=time_range,
+                                dropna=dropna
+                            )
+                            
+                            if len(result.df) == 0:
+                                logger.warning(f"No data found for point ({pt_lat}, {pt_lon})")
+                                continue
+                            
+                            df_point = result.df.copy()
+                            
+                            # Rename from OPeNDAP variable name to requested variable name
+                            if variable_opendap in df_point.columns:
+                                df_point = df_point.rename(columns={variable_opendap: var_name})
+                            
+                            # Add geometry column at the end
+                            df_point['geometry'] = Point(pt_lon, pt_lat)
+                            
+                            dfs.append(df_point)
+                            
+                            # Update completed queries counter for ETA
+                            completed_queries += 1
+                            
+                            # Update progress bar if not verbose
+                            if pbar is not None:
+                                pbar.update(1)
+                        except Exception as e:
+                            if verbose:
+                                logger.warning(f"Failed to query point ({pt_lat}, {pt_lon}) for {var_name}: {e}")
+                            # Update completed queries counter even for failures
+                            completed_queries += 1
+                            
+                            # Update progress bar if not verbose
+                            if pbar is not None:
+                                pbar.update(1)
                 
                 # Close progress bar if used
                 if pbar is not None:

@@ -1,12 +1,8 @@
 """
 Debug Script: Time-series query of Cloud Optical Thickness (COT) for Los Angeles.
 
-This script demonstrates how to retrieve a week-long time-series of Cloud Optical 
-Thickness using direct OPeNDAP queries for efficient time-series retrieval.
-
-Note: There's a bug in GEOS5FP_connection.py around line 2635 where query_geos5fp_point
-is called but not locally imported. This script uses the direct query_geos5fp_point 
-function as a workaround.
+This script demonstrates how to retrieve a month-long time-series of Cloud Optical 
+Thickness using the .COT() method.
 """
 
 import warnings
@@ -17,57 +13,45 @@ import pandas as pd
 warnings.filterwarnings('ignore', message='.*Ambiguous reference date string.*')
 
 try:
-    from GEOS5FP.GEOS5FP_point import query_geos5fp_point
+    from GEOS5FP import GEOS5FP
     
     print("=" * 70)
     print("Time-Series Query: Cloud Optical Thickness (COT)")
     print("Location: Los Angeles (34.05°N, 118.25°W)")
-    print("Duration: 1 week (single OPeNDAP query with time_range)")
+    print("Duration: 1 month")
     print("=" * 70)
     
     # Define coordinates for Los Angeles
     lat = 34.05
     lon = -118.25
     
-    # Define time range for one week
+    # Define time range for one month
     # Using a recent date range that should have data available
     end_time = datetime(2024, 11, 15, 0, 0)
-    start_time = end_time - timedelta(days=7)
+    start_time = end_time - timedelta(days=180)
     
     print(f"\nQuerying COT data from {start_time} to {end_time}...")
     print("Location: Latitude={}, Longitude={}".format(lat, lon))
-    print("Using single OPeNDAP query with time_range parameter")
     print("-" * 70)
     
-    print("\nMaking single OPeNDAP call with time-slice...")
-    print("Testing direct query_geos5fp_point function...\n")
+    # Create GEOS5FP connection
+    geos = GEOS5FP()
     
-    # Query COT using direct OPeNDAP query function
-    # COT is in dataset tavg1_2d_rad_Nx, variable TAUTOT
-    result = query_geos5fp_point(
-        dataset="tavg1_2d_rad_Nx",
-        variable="tautot",  # lowercase for OPeNDAP
+    print("\nCalling .COT() method with time_range parameter...\n")
+    
+    # Query COT using the .COT() method with time_range
+    # Note: The .COT() method signature doesn't support time_range directly,
+    # so we need to use .query() instead
+    df = geos.query(
+        target_variables="COT",
         lat=lat,
         lon=lon,
         time_range=(start_time, end_time),
         dropna=True
     )
     
-    # Result is a PointQueryResult with a df attribute
-    print(f"✓ Query completed!")
-    print(f"Result type: {type(result)}")
-    print(f"✓ Retrieved {len(result.df)} COT records")
-    
-    # Extract the DataFrame
-    df = result.df.copy()
-    
-    # Rename the column from 'tautot' to 'COT'
-    if 'tautot' in df.columns:
-        df = df.rename(columns={'tautot': 'COT'})
-    
-    # Add coordinate information
-    df['lat'] = result.lat_used
-    df['lon'] = result.lon_used
+    print(f"\n✓ Query completed!")
+    print(f"✓ Retrieved {len(df)} COT records")
     
     print("\n" + "=" * 70)
     print("Complete Time-Series DataFrame:")
