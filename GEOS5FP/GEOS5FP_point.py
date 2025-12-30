@@ -229,6 +229,10 @@ def _query_geos5fp_point_impl(
         # Get values - do this last to minimize OPeNDAP requests
         values = da.values
 
+        # Debugging: Log the fetched data and time values
+        logger.info(f"Fetched data for variable {variable}: {values}")
+        logger.info(f"Time values: {time_index}")
+
         df = pd.DataFrame({variable: values}, index=time_index)
         df.index.name = "time"
 

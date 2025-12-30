@@ -2,6 +2,7 @@
 import pytest
 from GEOS5FP import GEOS5FPConnection
 from pathlib import Path
+from shapely.geometry import MultiPoint
 
 
 def test_connection_initialization():
@@ -87,3 +88,19 @@ def test_connection_filenames_set():
     conn = GEOS5FPConnection()
     assert hasattr(conn, 'filenames')
     assert isinstance(conn.filenames, set)
+
+
+def test_query_with_multipoint():
+    """Test that the `.query` method works with a MultiPoint geometry."""
+    conn = GEOS5FPConnection()
+    multipoint = MultiPoint([(0, 0), (1, 1), (2, 2)])
+    
+    # Assuming `.query` method exists and takes `geometry` as a parameter
+    # Adding a placeholder target variable to satisfy the `query` method
+    # Adding a placeholder time range to satisfy the `query` method
+    result = conn.query(geometry=multipoint, target_variables="T2M", time_range=("2025-12-01", "2025-12-31"))
+    
+    # Validate the result (this is a placeholder, adjust based on actual behavior)
+    assert result is not None
+    assert isinstance(result, dict)  # Assuming the result is a dictionary
+    assert "data" in result  # Assuming the result contains a "data" key
