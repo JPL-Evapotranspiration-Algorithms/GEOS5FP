@@ -2572,7 +2572,6 @@ class GEOS5FPConnection:
                     else:
                         raw_variable = var_name
                 
-                # Convert variable name to lowercase for OPeNDAP
                 variable_opendap = raw_variable.lower()
                 
                 if verbose:
@@ -2673,7 +2672,7 @@ class GEOS5FPConnection:
                             
                             result = query_geos5fp_point(
                                 dataset=var_dataset,
-                                variable=variable_opendap,
+                                variable=var_opendap,
                                 lat=pt_lat,
                                 lon=pt_lon,
                                 time_range=(chunk_start, chunk_end),
@@ -2788,391 +2787,23 @@ class GEOS5FPConnection:
                             if pbar is not None:
                                 pbar.update(1)
                 
-                # Close progress bar if used
-                if pbar is not None:
-                    pbar.close()
-                
                 if not dfs:
                     if verbose:
                         logger.warning(f"No successful point queries for variable {var_name}")
                     continue
                 
-                var_df = pd.concat(dfs, ignore_index=False)
-                all_variable_dfs.append(var_df)
-            
-            if not all_variable_dfs:
-                raise ValueError("No successful point queries for any variable")
-            
-            # Merge all variable DataFrames
-            if len(all_variable_dfs) == 1:
-                result_df = all_variable_dfs[0]
-            else:
-                # Save geometry from first dataframe
-                geometry_col = all_variable_dfs[0]['geometry'].copy()
-                
-                # Merge on index (time), excluding geometry from all but first
-                result_df = all_variable_dfs[0].drop(columns=['geometry'])
-                for var_df in all_variable_dfs[1:]:
-                    # Get the variable column name (exclude geometry)
-                    var_cols = [col for col in var_df.columns if col != 'geometry']
-                    
-                    # Merge on index
-                    result_df = result_df.merge(
-                        var_df[var_cols],
-                        left_index=True,
-                        right_index=True,
-                        how='outer'
-                    )
-                
-                # Add geometry column at the end
-                result_df['geometry'] = geometry_col
-            
-            # Convert to GeoDataFrame
-            result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
-            
-            return result_gdf
-        
-        # Handle single-time queries (raster or single-point)
-        else:
-            if time_UTC is None:
-                raise ValueError("time_UTC is required for single-time queries")
-            
-            # For single variable, use original logic
-            if single_variable:
-                var_name = variable_names[0]
-                
-                # Check if variable is in our predefined list
-                if var_name in GEOS5FP_VARIABLES:
-                    # Use the standard retrieval method
-                    return self.variable(
-                        var_name,
-                        time_UTC,
-                        geometry=geometry,
-                        resampling=resampling,
-                        **kwargs
-                    )
-                
-                # Raw variable name provided
-                else:
-                    if dataset is None:
-                        raise ValueError(
-                            f"Dataset must be specified when using raw variable name '{var_name}'. "
-                            f"Known variables: {list(GEOS5FP_VARIABLES.keys())}"
-                        )
-                    
-                    if isinstance(time_UTC, str):
-                        time_UTC = parser.parse(time_UTC)
-                    
-                    # Check if this is a point query
-                    if is_point_geometry(geometry):
-                        if not HAS_OPENDAP_SUPPORT:
-                            raise ImportError(
-                                "Point query support requires xarray and netCDF4. "
-                                "Install with: conda install -c conda-forge xarray netcdf4"
-                            )
-                        
-                        if verbose:
-                            logger.info(
-                                f"retrieving {var_name} "
-                                f"from GEOS-5 FP {dataset} at point location(s)"
-                            )
-                        
-                        points = extract_points(geometry)
-                        dfs = []
-                        variable_opendap = var_name.lower()
-                        
-                        for pt_lat, pt_lon in points:
-                            try:
-                                # Query small time window around target time
-                                time_window_start = time_UTC - timedelta(hours=2)
-                                time_window_end = time_UTC + timedelta(hours=2)
-                                
-                                result = query_geos5fp_point(
-                                    dataset=dataset,
-                                    variable=variable_opendap,
-                                    lat=pt_lat,
-                                    lon=pt_lon,
-                                    time_range=(time_window_start, time_window_end),
-                                    dropna=dropna
-                                )
-                                
-                                if len(result.df) == 0:
-                                    logger.warning(f"No data found for point ({pt_lat}, {pt_lon})")
-                                    continue
-                                
-                                # Find closest time
-                                time_diffs = abs(result.df.index - time_UTC)
-                                closest_idx = time_diffs.argmin()
-                                df_point = result.df.iloc[[closest_idx]].copy()
-                                
-                                if variable_opendap in df_point.columns:
-                                    df_point = df_point.rename(columns={variable_opendap: var_name})
-                                    # Apply transformation if defined for this variable
-                                    if var_name in VARIABLE_TRANSFORMATIONS:
-                                        df_point[var_name] = df_point[var_name].apply(VARIABLE_TRANSFORMATIONS[var_name])
-                                
-                                # Add geometry column at the end
-                                df_point['geometry'] = Point(pt_lon, pt_lat)
-                                
-                                dfs.append(df_point)
-                            except Exception as e:
-                                logger.warning(f"Failed to query point ({pt_lat}, {pt_lon}): {e}")
-                        
-                        if not dfs:
-                            raise ValueError("No successful point queries")
-                        
-                        result_df = pd.concat(dfs, ignore_index=False)
-                        result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
-                        
-                        # Ensure geometry column is at the end
-                        if 'geometry' in result_gdf.columns:
-                            cols = [c for c in result_gdf.columns if c != 'geometry']
-                            cols.append('geometry')
-                            result_gdf = result_gdf[cols]
-                        
-                        return result_gdf
-                    # Raster query
-                    else:
-                        if verbose:
-                            logger.info(
-                                f"retrieving {var_name} "
-                                f"from GEOS-5 FP {dataset} " +
-                                "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
-                            )
-                        
-                        return self.interpolate(
-                            time_UTC=time_UTC,
-                            product=dataset,
-                            variable=var_name,
-                            geometry=geometry,
-                            resampling=resampling,
-                            **kwargs
-                        )
-            
-            # Multiple variables at single time (point query only)
-            else:
-                if not is_point_geometry(geometry):
-                    raise ValueError("Multiple variables can only be queried for point geometries")
-                
-                if not HAS_OPENDAP_SUPPORT:
-                    raise ImportError(
-                        "Point query support requires xarray and netCDF4. "
-                        "Install with: conda install -c conda-forge xarray netcdf4"
-                    )
-                
-                # Import point query function
-                from GEOS5FP.GEOS5FP_point import query_geos5fp_point
-                
-                if isinstance(time_UTC, str):
-                    time_UTC = parser.parse(time_UTC)
-                
-                # Validate temporal_interpolation parameter
-                if temporal_interpolation not in ["nearest", "interpolate"]:
-                    raise ValueError(
-                        f"temporal_interpolation must be 'nearest' or 'interpolate', got '{temporal_interpolation}'"
-                    )
-                
-                points = extract_points(geometry)
-                all_variable_dfs = []
-                
-                # Initialize timing for ETA tracking across all variables and points
-                from time import time as current_time
-                query_start_time = current_time()
-                total_queries = len(variable_names) * len(points)
-                completed_queries = 0
-                
-                # Create progress bar if not verbose
-                pbar = None
-                if not verbose:
-                    pbar = tqdm(
-                        total=total_queries,
-                        desc=f"Querying {len(variable_names)} variables",
-                        unit="query"
-                    )
-                
-                # Process each variable
-                for var_idx, var_name in enumerate(variable_names, 1):
-                    # Determine dataset for this variable
-                    var_dataset = dataset
-                    if var_dataset is None:
-                        if var_name in GEOS5FP_VARIABLES:
-                            _, var_dataset, raw_variable = get_variable_info(var_name)
-                        else:
-                            raise ValueError(
-                                f"Dataset must be specified when using raw variable name '{var_name}'. "
-                                f"Known variables: {list(GEOS5FP_VARIABLES.keys())}"
-                            )
-                    else:
-                        # Use provided dataset, determine variable
-                        if var_name in GEOS5FP_VARIABLES:
-                            _, _, raw_variable = get_variable_info(var_name)
-                        else:
-                            raw_variable = var_name
-                    
-                    variable_opendap = raw_variable.lower()
-                    
-                    if verbose:
-                        logger.info(
-                            f"retrieving {var_name} ({var_idx}/{len(variable_names)}) "
-                            f"from GEOS-5 FP {var_dataset} at {len(points)} point location(s)"
-                        )
-                    
-                    dfs = []
-                    for point_idx, (pt_lat, pt_lon) in enumerate(points, 1):
-                        # Calculate and display ETA
-                        if verbose:
-                            if completed_queries > 0:
-                                elapsed_time = current_time() - query_start_time
-                                avg_time_per_query = elapsed_time / completed_queries
-                                remaining_queries = total_queries - completed_queries
-                                eta_seconds = avg_time_per_query * remaining_queries
-                                
-                                # Format time as human-readable
-                                if eta_seconds < 60:
-                                    eta_str = f"{eta_seconds:.0f}s"
-                                elif eta_seconds < 3600:
-                                    eta_str = f"{eta_seconds/60:.1f}m"
-                                else:
-                                    eta_str = f"{eta_seconds/3600:.1f}h"
-                                
-                                # Format elapsed time
-                                if elapsed_time < 60:
-                                    elapsed_str = f"{elapsed_time:.0f}s"
-                                elif elapsed_time < 3600:
-                                    elapsed_str = f"{elapsed_time/60:.1f}m"
-                                else:
-                                    elapsed_str = f"{elapsed_time/3600:.1f}h"
-                                
-                                logger.info(
-                                    f"  Point {point_idx}/{len(points)} ({pt_lat:.4f}, {pt_lon:.4f}) - "
-                                    f"Elapsed: {elapsed_str}, ETA: {eta_str}"
-                                )
-                            else:
-                                logger.info(f"  Point {point_idx}/{len(points)} ({pt_lat:.4f}, {pt_lon:.4f})")
-                        
-                        try:
-                            # Query time window around target time
-                            # Larger window for interpolation to ensure we get before/after samples
-                            time_window_hours = 4 if temporal_interpolation == "interpolate" else 2
-                            time_window_start = time_UTC - timedelta(hours=time_window_hours)
-                            time_window_end = time_UTC + timedelta(hours=time_window_hours)
-                            
-                            result = query_geos5fp_point(
-                                dataset=var_dataset,
-                                variable=variable_opendap,
-                                lat=pt_lat,
-                                lon=pt_lon,
-                                time_range=(time_window_start, time_window_end),
-                                dropna=dropna
-                            )
-                            
-                            if len(result.df) == 0:
-                                logger.warning(f"No data found for point ({pt_lat}, {pt_lon})")
-                                continue
-                            
-                            # Apply temporal sampling method
-                            if temporal_interpolation == "nearest":
-                                # Find closest time
-                                time_diffs = abs(result.df.index - time_UTC)
-                                closest_idx = time_diffs.argmin()
-                                df_point = result.df.iloc[[closest_idx]].copy()
-                                
-                            elif temporal_interpolation == "interpolate":
-                                # Find times before and after target
-                                times_before = result.df.index[result.df.index <= time_UTC]
-                                times_after = result.df.index[result.df.index >= time_UTC]
-                                
-                                if len(times_before) > 0 and len(times_after) > 0:
-                                    # Get closest time before and after
-                                    time_before = times_before[-1]
-                                    time_after = times_after[0]
-                                    
-                                    if time_before == time_after:
-                                        # Exact match
-                                        df_point = result.df.loc[[time_before]].copy()
-                                    else:
-                                        # Linear interpolation
-                                        value_before = result.df.loc[time_before, variable_opendap]
-                                        value_after = result.df.loc[time_after, variable_opendap]
-                                        
-                                        # Calculate interpolation weight
-                                        total_delta = (time_after - time_before).total_seconds()
-                                        target_delta = (time_UTC - time_before).total_seconds()
-                                        weight = target_delta / total_delta
-                                        
-                                        # Interpolate
-                                        interpolated_value = value_before + weight * (value_after - value_before)
-                                        
-                                        # Create DataFrame with interpolated value
-                                        df_point = pd.DataFrame(
-                                            {variable_opendap: [interpolated_value]},
-                                            index=[time_UTC]
-                                        )
-                                        df_point.index.name = 'time'
-                                else:
-                                    # Fall back to nearest if can't interpolate
-                                    logger.warning(
-                                        f"Cannot interpolate for point ({pt_lat}, {pt_lon}), "
-                                        "using nearest instead"
-                                    )
-                                    time_diffs = abs(result.df.index - time_UTC)
-                                    closest_idx = time_diffs.argmin()
-                                    df_point = result.df.iloc[[closest_idx]].copy()
-                            
-                            if variable_opendap in df_point.columns:
-                                df_point = df_point.rename(columns={variable_opendap: var_name})
-                                # Apply transformation if defined for this variable
-                                if var_name in VARIABLE_TRANSFORMATIONS:
-                                    df_point[var_name] = df_point[var_name].apply(VARIABLE_TRANSFORMATIONS[var_name])
-                            
-                            # Add geometry column at the end
-                            df_point['geometry'] = Point(pt_lon, pt_lat)
-                            
-                            dfs.append(df_point)
-                            
-                            # Update completed queries counter for ETA
-                            completed_queries += 1
-                            
-                            # Update progress bar if not verbose
-                            if pbar is not None:
-                                pbar.update(1)
-                        except Exception as e:
-                            if verbose:
-                                logger.warning(f"Failed to query point ({pt_lat}, {pt_lon}) for {var_name}: {e}")
-                            # Update completed queries counter even for failures
-                            completed_queries += 1
-                            
-                            # Update progress bar if not verbose
-                            if pbar is not None:
-                                pbar.update(1)
-                    
-                    if not dfs:
-                        if verbose:
-                            logger.warning(f"No successful point queries for variable {var_name}")
-                        continue
-                    
-                    var_df = pd.concat(dfs, ignore_index=False)
-                    all_variable_dfs.append(var_df)
-                
-                # Close progress bar if used
-                if pbar is not None:
-                    pbar.close()
-                
-                if not all_variable_dfs:
-                    raise ValueError("No successful point queries for any variable")
-                
                 # Merge all variable DataFrames
-                if len(all_variable_dfs) == 1:
-                    result_df = all_variable_dfs[0]
+                if len(dfs) == 1:
+                    result_df = dfs[0]
                 else:
                     # When using temporal interpolation, all variables should be at exact target time
                     # For nearest, they may be at slightly different times, so we merge with tolerance
                     
                     # Start with first variable's dataframe
-                    result_df = all_variable_dfs[0].copy()
+                    result_df = dfs[0].copy()
                     
                     # Merge each subsequent variable
-                    for var_df in all_variable_dfs[1:]:
+                    for var_df in dfs[1:]:
                         # Get the variable column name (exclude geometry)
                         var_cols = [col for col in var_df.columns if col != 'geometry']
                         
@@ -3194,8 +2825,9 @@ class GEOS5FPConnection:
                                 direction='nearest',
                                 tolerance=pd.Timedelta(hours=2)
                             )
-                
-                # Convert to GeoDataFrame
-                result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
-                
-                return result_gdf
+            
+            # Convert to GeoDataFrame
+            result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
+            
+            return result_gdf
+```
