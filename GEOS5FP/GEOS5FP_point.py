@@ -154,7 +154,7 @@ def _query_geos5fp_point_impl(
     socket.setdefaulttimeout(120.0)  # 120 second timeout
     
     try:
-        logger.info(f"Opening OPeNDAP dataset: {URL}")
+        # logger.info(f"Opening OPeNDAP dataset: {URL}")
         
         # Disable caching, locking, and CF decoding to speed up remote OPeNDAP access
         ds = xr.open_dataset(
