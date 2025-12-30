@@ -72,3 +72,6 @@ COMPUTED_VARIABLES = {
     'PAR_proportion', # PAR albedo fraction (computed from ALBVISDR / ALBEDO)
     'NIR_proportion', # NIR albedo fraction (computed from ALBNIRDR / ALBEDO)
 }
+
+VERBOSE = False
+TEMPORAL_INTERPOLATION = "interpolate"

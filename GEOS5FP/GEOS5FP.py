@@ -2,6 +2,7 @@ from .constants import *
 from .exceptions import *
 from .GEOS5FP_granule import *
 from .GEOS5FP_connection import *
+from .query import *
 
 # Optional import for point queries
 try:
