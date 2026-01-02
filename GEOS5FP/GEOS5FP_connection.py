@@ -584,7 +584,7 @@ class GEOS5FPConnection:
             exclude_values=None,
             cmap=None,
             clip_min: Any = None,
-            clip_max: Any = None) -> Union[Raster, pd.DataFrame]:
+            clip_max: Any = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         Retrieve a single predefined variable at a specific time.
         
@@ -621,8 +621,8 @@ class GEOS5FPConnection:
         
         Returns
         -------
-        Raster or DataFrame
-            Raster of the requested variable or DataFrame for point queries
+        Raster, np.ndarray, or DataFrame
+            Raster of the requested variable, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         
         See Also
         --------
@@ -1050,13 +1050,13 @@ class GEOS5FPConnection:
         return interpolated_data
 
 
-    def SFMC(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def SFMC(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         top soil layer moisture content cubic meters per cubic meters
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry (raster geometry or Point/MultiPoint for time-series)
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of soil moisture or DataFrame for point queries
+        :return: raster of soil moisture, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="SFMC",
@@ -1072,13 +1072,13 @@ class GEOS5FPConnection:
 
     SM = SFMC
 
-    def LAI(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def LAI(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         leaf area index
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of LAI or DataFrame for point queries
+        :return: raster of LAI, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="LAI",
@@ -1106,13 +1106,13 @@ class GEOS5FPConnection:
 
         return NDVI
 
-    def LHLAND(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def LHLAND(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         latent heat flux in watts per square meter
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of soil moisture or DataFrame for point queries or DataFrame for point queries
+        :return: raster of latent heat flux, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="LHLAND",
@@ -1123,13 +1123,13 @@ class GEOS5FPConnection:
             exclude_values=[1.e+15]
         )
 
-    def EFLUX(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def EFLUX(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         latent heat flux in watts per square meter
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of soil moisture or DataFrame for point queries or DataFrame for point queries
+        :return: raster of latent heat flux, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="EFLUX",
@@ -1139,13 +1139,13 @@ class GEOS5FPConnection:
             interval=1
         )
 
-    def PARDR(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def PARDR(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         Surface downward PAR beam flux in watts per square meter
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of soil moisture or DataFrame for point queries or DataFrame for point queries
+        :return: raster of PAR beam flux, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="PARDR",
@@ -1155,13 +1155,13 @@ class GEOS5FPConnection:
             clip_min=0
         )
 
-    def PARDF(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def PARDF(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         Surface downward PAR diffuse flux in watts per square meter
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of soil moisture or DataFrame for point queries or DataFrame for point queries
+        :return: raster of PAR diffuse flux, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="PARDF",
@@ -1171,13 +1171,13 @@ class GEOS5FPConnection:
             clip_min=0
         )
 
-    def AOT(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def AOT(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         aerosol optical thickness (AOT) extinction coefficient
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of AOT or DataFrame for point queries or DataFrame for point queries
+        :return: raster of AOT, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         # 1:30, 4:30, 7:30, 10:30, 13:30, 16:30, 19:30, 22:30 UTC
         EXPECTED_HOURS = [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
@@ -1190,13 +1190,13 @@ class GEOS5FPConnection:
             expected_hours=EXPECTED_HOURS
         )
 
-    def COT(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def COT(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         cloud optical thickness (COT) extinction coefficient
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of COT or DataFrame for point queries or DataFrame for point queries
+        :return: raster of COT, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="COT",
@@ -1209,13 +1209,13 @@ class GEOS5FPConnection:
             self,
             time_UTC: Union[datetime, str],
             geometry: RasterGeometry = None,
-            resampling: str = None) -> Union[Raster, pd.DataFrame]:
+            resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         surface temperature (Ts) in Kelvin
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of Ta or DataFrame for point queries or DataFrame for point queries
+        :return: raster of Ts, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="Ts_K",
@@ -1237,13 +1237,13 @@ class GEOS5FPConnection:
             downsampling: str = None,
             apply_scale: bool = True,
             apply_bias: bool = True,
-            return_scale_and_bias: bool = False) -> Union[Raster, pd.DataFrame]:
+            return_scale_and_bias: bool = False) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         near-surface air temperature (Ta) in Kelvin
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry (raster or Point/MultiPoint)
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of Ta or DataFrame for point queries
+        :return: raster of Ta, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
@@ -1316,13 +1316,13 @@ class GEOS5FPConnection:
 
             return Ta_K
 
-    def Tmin_K(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def Tmin_K(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         minimum near-surface air temperature (Ta) in Kelvin
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of Ta or DataFrame for point queries
+        :return: raster of Ta, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="Tmin_K",
@@ -1343,13 +1343,13 @@ class GEOS5FPConnection:
     def Ta_C(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         return self.Ta_K(time_UTC=time_UTC, geometry=geometry, resampling=resampling) - 273.15
 
-    def PS(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def PS(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         surface pressure in Pascal
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of surface pressure or DataFrame for point queries or DataFrame for point queries
+        :return: raster of surface pressure, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="PS",
@@ -1358,13 +1358,13 @@ class GEOS5FPConnection:
             resampling=resampling
         )
 
-    def Q(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def Q(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         near-surface specific humidity (Q) in kilograms per kilogram
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of Q or DataFrame for point queries or DataFrame for point queries
+        :return: raster of Q, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="Q",
@@ -1565,13 +1565,13 @@ class GEOS5FPConnection:
     def Ea_kPa(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         return self.Ea_Pa(time_UTC=time_UTC, geometry=geometry, resampling=resampling) / 1000
 
-    def vapor_kgsqm(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def vapor_kgsqm(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         total column water vapor (vapor_gccm) in kilograms per square meter
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of vapor_gccm or DataFrame for point queries or DataFrame for point queries or DataFrame for point queries
+        :return: raster of vapor_gccm, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="vapor_kgsqm",
@@ -1581,23 +1581,23 @@ class GEOS5FPConnection:
             clip_min=0
         )
 
-    def vapor_gccm(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def vapor_gccm(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray]:
         """
         total column water vapor (vapor_gccm) in grams per square centimeter
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of vapor_gccm or DataFrame for point queries
+        :return: raster of vapor_gccm, numpy array for point queries, or DataFrame for multi-variable queries
         """
         return self.vapor_kgsqm(time_UTC=time_UTC, geometry=geometry, resampling=resampling) / 10
 
-    def ozone_dobson(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def ozone_dobson(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         total column ozone (ozone_cm) in Dobson units
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of vapor_gccm or DataFrame for point queries or DataFrame for point queries
+        :return: raster of ozone, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="ozone_dobson",
@@ -1607,23 +1607,23 @@ class GEOS5FPConnection:
             clip_min=0
         )
 
-    def ozone_cm(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+    def ozone_cm(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray]:
         """
         total column ozone (ozone_cm) in centimeters
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of vapor_gccm or DataFrame for point queries
+        :return: raster of ozone_cm, numpy array for point queries, or DataFrame for multi-variable queries
         """
         return self.ozone_dobson(time_UTC=time_UTC, geometry=geometry, resampling=resampling) / 1000
 
-    def U2M(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def U2M(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         eastward wind at 2 meters in meters per second
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of vapor_gccm or DataFrame for point queries or DataFrame for point queries
+        :return: raster of U2M, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="U2M",
@@ -1632,13 +1632,13 @@ class GEOS5FPConnection:
             resampling=resampling
         )
 
-    def V2M(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def V2M(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         northward wind at 2 meters in meters per second
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of vapor_gccm or DataFrame for point queries or DataFrame for point queries
+        :return: raster of V2M, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="V2M",
@@ -1647,13 +1647,13 @@ class GEOS5FPConnection:
             resampling=resampling
         )
 
-    def CO2SC(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def CO2SC(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         carbon dioxide suface concentration in ppm or micromol per mol
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of vapor_gccm or DataFrame for point queries or DataFrame for point queries
+        :return: raster of CO2SC, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         # 1:30, 4:30, 7:30, 10:30, 13:30, 16:30, 19:30, 22:30 UTC
         EXPECTED_HOURS = [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
@@ -1666,14 +1666,14 @@ class GEOS5FPConnection:
             expected_hours=EXPECTED_HOURS
         )
 
-    def Ca(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def Ca(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         Atmospheric CO2 concentration in ppm (parts per million by volume)
         Alias for CO2SC.
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of CO2 concentration or DataFrame for point queries
+        :return: raster of CO2 concentration, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         result = self.CO2SC(time_UTC, geometry=geometry, resampling=resampling)
         
@@ -1702,13 +1702,13 @@ class GEOS5FPConnection:
 
         return wind_speed
 
-    def SWin(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def SWin(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         incoming shortwave radiation (SWin) in watts per square meter
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of SWin or DataFrame for point queries or DataFrame for point queries or DataFrame for point queries
+        :return: raster of SWin, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="SWin",
@@ -1718,13 +1718,13 @@ class GEOS5FPConnection:
             clip_min=0
         )
 
-    def SWTDN(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def SWTDN(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         top of atmosphere incoming shortwave radiation (SWin) in watts per square meter
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of SWin or DataFrame for point queries or DataFrame for point queries
+        :return: raster of SWTDN, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="SWTDN",
@@ -1734,13 +1734,13 @@ class GEOS5FPConnection:
             clip_min=0
         )
 
-    def ALBVISDR(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def ALBVISDR(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         Direct beam VIS-UV surface albedo
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
+        :return: raster of direct visible albedo, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="ALBVISDR",
@@ -1751,13 +1751,13 @@ class GEOS5FPConnection:
             clip_max=1
         )
 
-    def ALBVISDF(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def ALBVISDF(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         Diffuse beam VIS-UV surface albedo
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
+        :return: raster of diffuse visible albedo, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="ALBVISDF",
@@ -1768,13 +1768,13 @@ class GEOS5FPConnection:
             clip_max=1
         )
 
-    def ALBNIRDF(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def ALBNIRDF(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         Diffuse beam NIR surface albedo
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
+        :return: raster of diffuse NIR albedo, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="ALBNIRDF",
@@ -1785,13 +1785,13 @@ class GEOS5FPConnection:
             clip_max=1
         )
 
-    def ALBNIRDR(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def ALBNIRDR(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         Direct beam NIR surface albedo
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
+        :return: raster of direct NIR albedo, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="ALBNIRDR",
@@ -1802,13 +1802,13 @@ class GEOS5FPConnection:
             clip_max=1
         )
 
-    def ALBEDO(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def ALBEDO(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         Surface albedo
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of direct visible albedo or DataFrame for point queries or DataFrame for point queries
+        :return: raster of surface albedo, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         return self.query(
             target_variables="ALBEDO",
@@ -1819,7 +1819,7 @@ class GEOS5FPConnection:
             clip_max=1
         )
     
-    def PAR_proportion(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def PAR_proportion(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         PAR albedo fraction - the proportion of total albedo from the direct PAR beam component
         Formula: PAR_proportion = ALBVISDR / ALBEDO
@@ -1828,14 +1828,14 @@ class GEOS5FPConnection:
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of PAR albedo fraction or DataFrame for point queries
+        :return: raster of PAR albedo fraction, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         albedo_NWP = self.ALBEDO(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         RVIS_NWP = self.ALBVISDR(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         PAR_proportion = rt.clip(RVIS_NWP / albedo_NWP, 0, 1)
         return PAR_proportion
     
-    def NIR_proportion(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, pd.DataFrame]:
+    def NIR_proportion(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         NIR albedo fraction - the proportion of total albedo from the direct NIR beam component
         Formula: NIR_proportion = ALBNIRDR / ALBEDO
@@ -1844,7 +1844,7 @@ class GEOS5FPConnection:
         :param time_UTC: date/time in UTC
         :param geometry: optional target geometry
         :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of NIR albedo fraction or DataFrame for point queries
+        :return: raster of NIR albedo fraction, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
         """
         albedo_NWP = self.ALBEDO(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         RNIR_NWP = self.ALBNIRDR(time_UTC=time_UTC, geometry=geometry, resampling=resampling)

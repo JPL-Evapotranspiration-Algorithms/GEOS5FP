@@ -33,10 +33,9 @@ class TestSeriesTimeInput:
         # This should work without raising an error
         result = connection.COT(time_UTC=times, geometry=geometries)
         
-        # Should return a DataFrame
-        assert isinstance(result, pd.DataFrame)
+        # Should return a numpy array for single-variable non-raster queries
+        assert isinstance(result, np.ndarray)
         assert len(result) == 2
-        assert 'COT' in result.columns
     
     def test_series_with_single_geometry(self, connection):
         """Test pandas Series time_UTC with single geometry."""
@@ -123,5 +122,6 @@ class TestSeriesTimeInput:
         # This should work without raising an error
         result = connection.COT(time_UTC=time, geometry=geometry)
         
-        # Should return a DataFrame
-        assert isinstance(result, pd.DataFrame)
+        # Should return a numpy array for single-variable point query
+        assert isinstance(result, np.ndarray)
+        assert len(result) == 1
