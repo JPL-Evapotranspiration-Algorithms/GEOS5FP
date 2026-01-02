@@ -100,9 +100,12 @@ def query(
     
     Returns
     -------
-    Raster or pd.DataFrame
-        - Raster if querying spatial data at a single time (single variable only)
-        - DataFrame if querying point location(s), with time index and variable column(s)
+    np.ndarray, Raster, or gpd.GeoDataFrame
+        - np.ndarray: For single-variable point queries (Point or MultiPoint geometry), 
+          returns a 1D array of values matching the query points
+        - Raster: For spatial data queries at a single time (single variable only)
+        - gpd.GeoDataFrame: For multi-variable point queries, batch queries with targets_df, 
+          or point time-series, with geometry and variable column(s)
     
     Examples
     --------
@@ -691,6 +694,12 @@ def query(
             
             return targets_df
         
+        # For single-variable queries, return numpy array of values instead of GeoDataFrame
+        if single_variable and len(variable_names) == 1:
+            var_name = variable_names[0]
+            if var_name in result_gdf.columns:
+                return result_gdf[var_name].values
+        
         return result_gdf
     
     # Create Point geometry from lat/lon if provided
@@ -981,7 +990,9 @@ def query(
         if not all_variable_dfs:
             if verbose:
                 logger.warning("No successful point queries for any variable")
-            # Return empty GeoDataFrame
+            # Return empty numpy array for single-variable queries, empty GeoDataFrame otherwise
+            if single_variable:
+                return np.array([])
             return gpd.GeoDataFrame()
         
         # Merge all variable DataFrames
@@ -1020,6 +1031,12 @@ def query(
         
         # Convert to GeoDataFrame
         result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
+        
+        # For single-variable queries, return numpy array of values instead of GeoDataFrame
+        if single_variable and len(variable_names) == 1:
+            var_name = variable_names[0]
+            if var_name in result_gdf.columns:
+                return result_gdf[var_name].values
         
         return result_gdf
     
@@ -1094,7 +1111,9 @@ def query(
                 
                 if len(result.df) == 0:
                     logger.warning(f"No data found for point ({pt_lat}, {pt_lon}) at time {target_time}")
-                    # Return empty GeoDataFrame
+                    # Return empty numpy array for single-variable queries, empty GeoDataFrame otherwise
+                    if single_variable:
+                        return np.array([])
                     return gpd.GeoDataFrame()
                 
                 # Find closest time to target
@@ -1114,11 +1133,15 @@ def query(
                 all_variable_dfs.append(df_point)
             except Exception as e:
                 logger.warning(f"Failed to query {var_name} at ({pt_lat}, {pt_lon}): {e}")
-                # Return empty GeoDataFrame
+                # Return empty numpy array for single-variable queries, empty GeoDataFrame otherwise
+                if single_variable:
+                    return np.array([])
                 return gpd.GeoDataFrame()
         
         # Merge all variable DataFrames
         if not all_variable_dfs:
+            if single_variable:
+                return np.array([])
             return gpd.GeoDataFrame()
         
         if len(all_variable_dfs) == 1:
@@ -1137,6 +1160,12 @@ def query(
         
         # Convert to GeoDataFrame
         result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
+        
+        # For single-variable queries, return numpy array of values instead of GeoDataFrame
+        if single_variable and len(variable_names) == 1:
+            var_name = variable_names[0]
+            if var_name in result_gdf.columns:
+                return result_gdf[var_name].values
         
         return result_gdf
     
