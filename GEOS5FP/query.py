@@ -4,7 +4,8 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 from tqdm.notebook import tqdm
-from rasters import Raster, RasterGeometry, Point, MultiPoint
+from rasters import Raster, RasterGeometry
+from shapely.geometry import Point, MultiPoint
 from dateutil import parser
 import logging
 
@@ -210,8 +211,8 @@ def query(
     # Check for vectorized batch query (lists of times and geometries)
     is_batch_query = False
     if time_UTC is not None and time_range is None:
-        # Check if time_UTC is a list/Series
-        if isinstance(time_UTC, (list, pd.Series)):
+        # Check if time_UTC is a list/Series/tuple/array
+        if isinstance(time_UTC, (list, tuple, pd.Series, np.ndarray)):
             is_batch_query = True
         # Check if lat/lon are lists/Series
         elif lat is not None and lon is not None:
@@ -232,10 +233,12 @@ def query(
         # Convert inputs to lists
         if isinstance(time_UTC, pd.Series):
             times = time_UTC.tolist()
-        elif isinstance(time_UTC, list):
-            times = time_UTC
+        elif isinstance(time_UTC, (list, tuple)):
+            times = list(time_UTC)
+        elif isinstance(time_UTC, np.ndarray):
+            times = time_UTC.tolist()
         else:
-            raise ValueError("For batch queries, time_UTC must be a list or Series")
+            raise ValueError("For batch queries, time_UTC must be a list, tuple, Series, or array")
         
         # Get geometries
         if geometry is not None:
@@ -294,8 +297,8 @@ def query(
                 # Use first point
                 pt_lon, pt_lat = geom.geoms[0].x, geom.geoms[0].y
             else:
-                raise ValueError(f"Unsupported geometry type: {type(geom)}")
-            
+                raise ValueError(f"Unsupported geometry type (must be Point or MultiPoint): {type(geom)}")
+
             # Round to avoid floating point issues
             coord_key = (round(pt_lat, 6), round(pt_lon, 6))
             
@@ -964,8 +967,22 @@ def query(
             if not dfs:
                 if verbose:
                     logger.warning(f"No successful point queries for variable {var_name}")
-                # Ensure 'continue' is used within a loop or replace with appropriate logic
-                return
+                continue
+            
+            # Concatenate all DataFrames for this variable
+            if len(dfs) > 1:
+                df_combined = pd.concat(dfs, axis=0).sort_index()
+            else:
+                df_combined = dfs[0]
+            
+            all_variable_dfs.append(df_combined)
+        
+        # Check if we got any results
+        if not all_variable_dfs:
+            if verbose:
+                logger.warning("No successful point queries for any variable")
+            # Return empty GeoDataFrame
+            return gpd.GeoDataFrame()
         
         # Merge all variable DataFrames
         if len(all_variable_dfs) == 1:
@@ -1000,18 +1017,132 @@ def query(
                         direction='nearest',
                         tolerance=pd.Timedelta(hours=2)
                     )
-            
-            # Convert to GeoDataFrame
-            result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
-            
-            return result_gdf
+        
+        # Convert to GeoDataFrame
+        result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
+        
+        return result_gdf
     
-    # Modify the return type for single variable and non-RasterGeometry
-    if single_variable and not isinstance(geometry, RasterGeometry):
-        # Extract the single variable column as a numpy array
-        if isinstance(result_gdf, gpd.GeoDataFrame):
-            return result_gdf[variable_names[0]].to_numpy()
-        elif isinstance(result_gdf, pd.DataFrame):
-            return result_gdf[variable_names[0]].to_numpy()
+    # Handle single-time point queries (not time-series, not batch)
+    # This is the case where: single time_UTC, Point geometry, no time_range
+    if time_UTC is not None and is_point_geometry(geometry) and time_range is None:
+        if not HAS_OPENDAP_SUPPORT:
+            raise ImportError(
+                "Point query support requires xarray and netCDF4. "
+                "Install with: conda install -c conda-forge xarray netCDF4"
+            )
+        
+        # Parse time if string
+        if isinstance(time_UTC, str):
+            target_time = parser.parse(time_UTC)
         else:
-            raise TypeError("Unexpected result type for single variable query")
+            target_time = time_UTC
+        
+        # Create a narrow time range around the target time (±2 hours)
+        time_range_start = target_time - timedelta(hours=2)
+        time_range_end = target_time + timedelta(hours=2)
+        
+        # Extract point coordinates
+        if isinstance(geometry, Point):
+            pt_lon, pt_lat = geometry.x, geometry.y
+        elif isinstance(geometry, MultiPoint):
+            pt_lon, pt_lat = geometry.geoms[0].x, geometry.geoms[0].y
+        else:
+            raise ValueError(f"Unsupported point geometry: {type(geometry)}")
+        
+        # Query each variable
+        all_variable_dfs = []
+        
+        for var_name in variable_names:
+            # Determine dataset for this variable
+            var_dataset = dataset
+            if var_dataset is None:
+                if var_name in GEOS5FP_VARIABLES:
+                    _, var_dataset, raw_variable = get_variable_info(var_name)
+                else:
+                    raise ValueError(
+                        f"Dataset must be specified when using raw variable name '{var_name}'. "
+                        f"Known variables: {list(GEOS5FP_VARIABLES.keys())}"
+                    )
+            else:
+                # Use provided dataset, determine variable
+                if var_name in GEOS5FP_VARIABLES:
+                    _, _, raw_variable = get_variable_info(var_name)
+                else:
+                    raw_variable = var_name
+            
+            # Convert variable name to lowercase for OPeNDAP
+            variable_opendap = raw_variable.lower()
+            
+            if verbose:
+                logger.info(
+                    f"Retrieving {var_name} from GEOS-5 FP {var_dataset} {raw_variable} "
+                    f"at ({pt_lat}, {pt_lon}) for time {target_time}"
+                )
+            
+            try:
+                from GEOS5FP.GEOS5FP_point import query_geos5fp_point
+                
+                result = query_geos5fp_point(
+                    dataset=var_dataset,
+                    variable=variable_opendap,
+                    lat=pt_lat,
+                    lon=pt_lon,
+                    time_range=(time_range_start, time_range_end),
+                    dropna=dropna
+                )
+                
+                if len(result.df) == 0:
+                    logger.warning(f"No data found for point ({pt_lat}, {pt_lon}) at time {target_time}")
+                    # Return empty GeoDataFrame
+                    return gpd.GeoDataFrame()
+                
+                # Find closest time to target
+                time_diffs = abs(result.df.index - target_time)
+                closest_idx = time_diffs.argmin()
+                
+                # Extract value at closest time
+                df_point = result.df.iloc[[closest_idx]].copy()
+                
+                # Rename from OPeNDAP variable name to requested variable name
+                if variable_opendap in df_point.columns:
+                    df_point = df_point.rename(columns={variable_opendap: var_name})
+                
+                # Add geometry column
+                df_point['geometry'] = Point(pt_lon, pt_lat)
+                
+                all_variable_dfs.append(df_point)
+            except Exception as e:
+                logger.warning(f"Failed to query {var_name} at ({pt_lat}, {pt_lon}): {e}")
+                # Return empty GeoDataFrame
+                return gpd.GeoDataFrame()
+        
+        # Merge all variable DataFrames
+        if not all_variable_dfs:
+            return gpd.GeoDataFrame()
+        
+        if len(all_variable_dfs) == 1:
+            result_df = all_variable_dfs[0]
+        else:
+            # Merge on time index
+            result_df = all_variable_dfs[0].copy()
+            for var_df in all_variable_dfs[1:]:
+                var_cols = [c for c in var_df.columns if c != 'geometry']
+                result_df = result_df.merge(
+                    var_df[var_cols],
+                    left_index=True,
+                    right_index=True,
+                    how='outer'
+                )
+        
+        # Convert to GeoDataFrame
+        result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
+        
+        return result_gdf
+    
+    # If we get here, we need to handle raster queries or other cases
+    # For now, raise an error to indicate this path is not yet fully implemented
+    raise NotImplementedError(
+        "Non-time-series queries for raster geometries are not yet fully implemented in this version. "
+        "Please use time_range for point queries or provide proper implementation for raster queries."
+    )
