@@ -294,11 +294,17 @@ def query(
         coord_to_records = {}
         for idx, (time_val, geom) in enumerate(zip(parsed_times, geometries)):
             # Extract point coordinates
-            if isinstance(geom, Point):
-                pt_lon, pt_lat = geom.x, geom.y
-            elif isinstance(geom, MultiPoint):
+            # Handle rasters geometry wrapper (similar to geometry_utils.extract_points)
+            if hasattr(geom, 'geometry'):
+                unwrapped_geom = geom.geometry
+            else:
+                unwrapped_geom = geom
+            
+            if isinstance(unwrapped_geom, Point):
+                pt_lon, pt_lat = unwrapped_geom.x, unwrapped_geom.y
+            elif isinstance(unwrapped_geom, MultiPoint):
                 # Use first point
-                pt_lon, pt_lat = geom.geoms[0].x, geom.geoms[0].y
+                pt_lon, pt_lat = unwrapped_geom.geoms[0].x, unwrapped_geom.geoms[0].y
             else:
                 raise ValueError(f"Unsupported geometry type (must be Point or MultiPoint): {type(geom)}")
 
@@ -589,6 +595,10 @@ def query(
         
         # Move geometry to end
         if 'geometry' in result_df.columns:
+            # Unwrap rasters geometry objects to shapely for GeoPandas compatibility
+            result_df['geometry'] = result_df['geometry'].apply(
+                lambda g: g.geometry if hasattr(g, 'geometry') else g
+            )
             cols = [c for c in result_df.columns if c != 'geometry']
             cols.append('geometry')
             result_df = result_df[cols]
