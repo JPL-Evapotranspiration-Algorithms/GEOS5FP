@@ -1070,10 +1070,16 @@ def query(
         time_range_end = target_time + timedelta(hours=2)
         
         # Extract point coordinates
-        if isinstance(geometry, Point):
-            pt_lon, pt_lat = geometry.x, geometry.y
-        elif isinstance(geometry, MultiPoint):
-            pt_lon, pt_lat = geometry.geoms[0].x, geometry.geoms[0].y
+        # Handle rasters geometry wrapper
+        if hasattr(geometry, 'geometry'):
+            unwrapped_geom = geometry.geometry
+        else:
+            unwrapped_geom = geometry
+        
+        if isinstance(unwrapped_geom, Point):
+            pt_lon, pt_lat = unwrapped_geom.x, unwrapped_geom.y
+        elif isinstance(unwrapped_geom, MultiPoint):
+            pt_lon, pt_lat = unwrapped_geom.geoms[0].x, unwrapped_geom.geoms[0].y
         else:
             raise ValueError(f"Unsupported point geometry: {type(geometry)}")
         
