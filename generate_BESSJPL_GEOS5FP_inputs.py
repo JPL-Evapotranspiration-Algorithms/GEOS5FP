@@ -2,15 +2,14 @@ from os.path import dirname, join
 import logging
 import sys
 
+from check_distribution import check_distribution
+
 from ECOv002_calval_tables import load_times_locations
 from GEOS5FP import GEOS5FP
 
 GEOS5FP_INPUTS = [
-    "Ta_C",        # Air temperature (°C)
-    "RH",          # Relative humidity (fraction)
-    "ALBEDO",      # Surface albedo
-    "ALBVISDR",    # Visible direct beam albedo
-    "ALBNIRDR",    # Near-infrared direct beam albedo
+    "Ca",
+    "wind_speed_mps"
 ]
 
 logger = logging.getLogger(__name__)
@@ -37,6 +36,12 @@ def generate_BESSJPL_GEOS5FP_inputs(
         targets_df=targets_df,
         verbose=True
     )
+    
+    for column in results_df.columns:
+        try:
+            check_distribution(results_df[column], column)
+        except Exception as e:
+            continue
 
     if update_package_data:
         if filename is None:
