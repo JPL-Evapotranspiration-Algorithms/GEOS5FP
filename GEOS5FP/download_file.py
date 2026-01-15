@@ -176,6 +176,7 @@ def download_file(
                 # Open temporary file for writing in binary mode
                 with open(expanded_partial_filename, 'wb') as f:
                     # Configure tqdm progress bar
+                    # TODO: Fix progress bar freezing issues and re-enable
                     tqdm_kwargs = dict(
                         desc=posixpath.basename(expanded_partial_filename),
                         total=total,
@@ -187,7 +188,7 @@ def download_file(
                         ascii=True,
                         miniters=1,
                         mininterval=0.1,
-                        disable=False
+                        disable=True  # Disabled due to freezing issues
                     )
                     # Show progress bar only if stdout is a TTY
                     if sys.stdout.isatty():
