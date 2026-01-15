@@ -342,6 +342,7 @@ def query(
         completed_batches = 0
         
         # Create progress bar if not verbose
+        # TODO: Fix progress bar freezing issues and re-enable
         pbar = None
         if not verbose:
             pbar = tqdm(
@@ -351,7 +352,8 @@ def query(
                 mininterval=0,
                 miniters=1,
                 dynamic_ncols=True,
-                smoothing=0
+                smoothing=0,
+                disable=True  # Disabled due to freezing issues
             )
         
         # Initialize results dictionary indexed by original record index
@@ -807,12 +809,14 @@ def query(
             completed_queries = 0
             
             # Create progress bar if not verbose
+            # TODO: Fix progress bar freezing issues and re-enable
             pbar = None
             if not verbose:
                 pbar = tqdm(
                     total=total_queries,
                     desc=f"Querying {var_name}",
-                    unit=query_unit
+                    unit=query_unit,
+                    disable=True  # Disabled due to freezing issues
                 )
             
             # Query data
