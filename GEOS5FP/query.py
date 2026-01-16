@@ -323,18 +323,17 @@ def query(
         # Import cluster_times utility
         from GEOS5FP.cluster_times import cluster_times
         
-        # Count total queries needed
-        # Use smaller time windows (1 day) to reduce data transfer and improve reliability
-        total_query_batches = 0
+        # Count total queries needed - this is an estimate before dataset grouping
+        # The actual count will be calculated after grouping variables by dataset
+        estimated_batches_per_coord = {}
         for coord_key, records in coord_to_records.items():
             clusters = cluster_times(records, max_days_per_query=1)
-            total_query_batches += len(clusters)
+            estimated_batches_per_coord[coord_key] = len(clusters)
         
         if verbose:
             logger.info(
                 f"Processing {len(parsed_times)} spatio-temporal records at "
-                f"{len(coord_to_records)} unique coordinates "
-                f"({total_query_batches} query batches)..."
+                f"{len(coord_to_records)} unique coordinates..."
             )
         
         # Initialize timing for ETA tracking
@@ -343,21 +342,6 @@ def query(
         completed_batches = 0
         
         logger.info("DEBUG: About to initialize results_by_index...")
-        
-        # Create progress bar if not verbose
-        # TODO: Fix progress bar freezing issues and re-enable
-        pbar = None
-        if not verbose:
-            pbar = tqdm(
-                total=total_query_batches,
-                desc=f"GEOS-5 FP",
-                unit="batch",
-                mininterval=0,
-                miniters=1,
-                dynamic_ncols=True,
-                smoothing=0,
-                disable=True  # Disabled due to freezing issues
-            )
         
         # Initialize results dictionary indexed by original record index
         results_by_index = {i: {'time_UTC': t, 'geometry': g} 
@@ -422,9 +406,19 @@ def query(
         # Import multi-variable query function
         from GEOS5FP.GEOS5FP_point import query_geos5fp_point_multi
         
+        # Calculate total query batches based on datasets and coordinates
+        total_query_batches = 0
+        for var_dataset in dataset_to_variables.keys():
+            for coord_key in coord_to_records.keys():
+                total_query_batches += estimated_batches_per_coord[coord_key]
+        
         logger.info(f"DEBUG: Import successful. About to process {len(dataset_to_variables)} datasets...")
         logger.info(f"DEBUG: Datasets to process: {list(dataset_to_variables.keys())}")
+        logger.info(f"DEBUG: Total query batches across all datasets: {total_query_batches}")
         logger.info(f"DEBUG: Starting dataset iteration loop...")
+        
+        # Initialize progress bar (disabled for now due to freezing issues)
+        pbar = None
         
         # Process each dataset (querying all its variables together)
         for var_dataset, var_list in dataset_to_variables.items():
@@ -436,16 +430,13 @@ def query(
                 if len(var_list) == 1:
                     logger.info(
                         f"Querying {var_names_in_dataset[0]} from {var_dataset} "
-                        f"at {len(coord_to_records)} coordinates ({total_query_batches} batches)..."
+                        f"at {len(coord_to_records)} coordinates..."
                     )
                 else:
                     logger.info(
                         f"Querying {len(var_list)} variables ({', '.join(var_names_in_dataset)}) "
-                        f"from {var_dataset} at {len(coord_to_records)} coordinates "
-                        f"({total_query_batches} batches)..."
+                        f"from {var_dataset} at {len(coord_to_records)} coordinates..."
                     )
-            
-            batch_num = 0
             
             # Query each unique coordinate with time clustering
             for coord_idx, (coord_key, records) in enumerate(coord_to_records.items(), 1):
@@ -463,8 +454,6 @@ def query(
                 
                 # Query each time cluster
                 for cluster_idx, cluster in enumerate(time_clusters, 1):
-                    batch_num += 1
-                    
                     # Get time range for this cluster
                     times_in_cluster = [r['time'] for r in cluster]
                     min_time = min(times_in_cluster)
@@ -475,7 +464,7 @@ def query(
                     time_range_start = min_time - timedelta(hours=2)
                     time_range_end = max_time + timedelta(hours=2)
                     
-                    # Calculate and display ETA
+                    # Calculate and display ETA (using completed_batches as the counter)
                     elapsed_time = current_time() - query_start_time
                     if verbose:
                         if completed_batches > 0:
@@ -500,7 +489,7 @@ def query(
                                 elapsed_str = f"{elapsed_time/3600:.1f}h"
                             
                             logger.info(
-                                f"    Batch {batch_num}/{total_query_batches}: "
+                                f"    Batch {completed_batches + 1}/{total_query_batches}: "
                                 f"cluster {cluster_idx}/{len(time_clusters)} - "
                                 f"{len(cluster)} records, {time_span_days:.1f} days "
                                 f"({min_time.date()} to {max_time.date()}) - "
@@ -508,7 +497,7 @@ def query(
                             )
                         else:
                             logger.info(
-                                f"    Batch {batch_num}/{total_query_batches}: "
+                                f"    Batch {completed_batches + 1}/{total_query_batches}: "
                                 f"cluster {cluster_idx}/{len(time_clusters)} - "
                                 f"{len(cluster)} records, {time_span_days:.1f} days "
                                 f"({min_time.date()} to {max_time.date()})"
