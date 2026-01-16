@@ -314,7 +314,18 @@ def query_geos5fp_point_multi(
     """
     url = f"{base_url}/{dataset}"
     # Disable caching, locking, and CF decoding to speed up remote OPeNDAP access
-    ds = xr.open_dataset(url, engine=engine, cache=False, lock=False, decode_cf=False)
+    # Add timeout to prevent hanging
+    import socket
+    socket.setdefaulttimeout(120)  # 120 second timeout (match single-variable function)
+    
+    logger.info(f"Opening OPeNDAP dataset: {url}")
+    
+    try:
+        ds = xr.open_dataset(url, engine=engine, cache=False, lock=False, decode_cf=False)
+        logger.info(f"Successfully opened dataset {dataset}")
+    except Exception as e:
+        logger.error(f"Failed to open dataset {url}: {e}")
+        raise
     
     # Handle longitude convention
     ds_lon = ds["lon"].values
