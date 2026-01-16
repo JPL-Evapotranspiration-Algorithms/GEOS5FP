@@ -324,9 +324,10 @@ def query(
         from GEOS5FP.cluster_times import cluster_times
         
         # Count total queries needed
+        # Use smaller time windows (1 day) to reduce data transfer and improve reliability
         total_query_batches = 0
         for coord_key, records in coord_to_records.items():
-            clusters = cluster_times(records, max_days_per_query=7)
+            clusters = cluster_times(records, max_days_per_query=1)
             total_query_batches += len(clusters)
         
         if verbose:
@@ -340,6 +341,8 @@ def query(
         from time import time as current_time
         query_start_time = current_time()
         completed_batches = 0
+        
+        logger.info("DEBUG: About to initialize results_by_index...")
         
         # Create progress bar if not verbose
         # TODO: Fix progress bar freezing issues and re-enable
@@ -360,6 +363,9 @@ def query(
         results_by_index = {i: {'time_UTC': t, 'geometry': g} 
                             for i, (t, g) in enumerate(zip(parsed_times, geometries))}
         
+        logger.info(f"DEBUG: Initialized results_by_index with {len(results_by_index)} entries")
+        logger.info(f"DEBUG: About to group variables by dataset for {len(variable_names)} variables...")
+        
         # Group variables by dataset for efficient multi-variable queries
         from collections import defaultdict
         dataset_to_variables = defaultdict(list)
@@ -375,6 +381,7 @@ def query(
         }
         
         for var_name in variable_names:
+            logger.info(f"DEBUG: Processing variable '{var_name}'...")
             # Check if this is a computed variable
             if var_name in COMPUTED_VARIABLES:
                 computed_variables.append(var_name)
@@ -410,11 +417,18 @@ def query(
             variable_opendap = raw_variable.lower()
             dataset_to_variables[var_dataset].append((var_name, variable_opendap))
         
+        logger.info(f"DEBUG: Finished grouping variables. About to import query_geos5fp_point_multi...")
+        
         # Import multi-variable query function
         from GEOS5FP.GEOS5FP_point import query_geos5fp_point_multi
         
+        logger.info(f"DEBUG: Import successful. About to process {len(dataset_to_variables)} datasets...")
+        logger.info(f"DEBUG: Datasets to process: {list(dataset_to_variables.keys())}")
+        logger.info(f"DEBUG: Starting dataset iteration loop...")
+        
         # Process each dataset (querying all its variables together)
         for var_dataset, var_list in dataset_to_variables.items():
+            logger.info(f"DEBUG: Entered loop, processing dataset: {var_dataset}")
             var_names_in_dataset = [v[0] for v in var_list]
             var_opendap_names = [v[1] for v in var_list]
             
@@ -437,8 +451,8 @@ def query(
             for coord_idx, (coord_key, records) in enumerate(coord_to_records.items(), 1):
                 pt_lat, pt_lon = coord_key
                 
-                # Cluster times to keep queries manageable
-                time_clusters = cluster_times(records, max_days_per_query=7)
+                # Cluster times to keep queries manageable (1 day windows for reliability)
+                time_clusters = cluster_times(records, max_days_per_query=1)
                 
                 if verbose:
                     logger.info(
@@ -511,6 +525,12 @@ def query(
                     
                     try:
                         # Query all variables for this dataset in a single request
+                        if verbose:
+                            logger.info(
+                                f"      Starting query for {len(var_opendap_names)} variable(s) "
+                                f"at ({pt_lat:.4f}, {pt_lon:.4f})..."
+                            )
+                        
                         if len(var_opendap_names) == 1:
                             # Single variable - use original function
                             from GEOS5FP.GEOS5FP_point import query_geos5fp_point
@@ -532,6 +552,9 @@ def query(
                                 time_range=(time_range_start, time_range_end),
                                 dropna=dropna
                             )
+                        
+                        if verbose:
+                            logger.info(f"      Query completed, retrieved {len(result.df)} time steps")
                         
                         if len(result.df) == 0:
                             logger.warning(
