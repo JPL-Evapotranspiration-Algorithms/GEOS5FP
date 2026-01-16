@@ -1343,6 +1343,9 @@ class GEOS5FPConnection:
     def Ta_C(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         return self.Ta_K(time_UTC=time_UTC, geometry=geometry, resampling=resampling) - 273.15
 
+    def Tmin_C(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+        return self.Tmin_K(time_UTC=time_UTC, geometry=geometry, resampling=resampling) - 273.15
+
     def PS(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
         surface pressure in Pascal

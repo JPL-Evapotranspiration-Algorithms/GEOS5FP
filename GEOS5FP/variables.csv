@@ -15,6 +15,7 @@ Ta_K,Ta,tavg1_2d_slv_Nx,T2M
 Ta_C,Ta in Celsius,tavg1_2d_slv_Nx,T2M
 Tmin,Tmin,inst3_2d_asm_Nx,T2MMIN
 Tmin_K,Tmin,inst3_2d_asm_Nx,T2MMIN
+Tmin_C,Tmin in Celsius,inst3_2d_asm_Nx,T2MMIN
 PS,surface pressure,tavg1_2d_slv_Nx,PS
 Q,Q,tavg1_2d_slv_Nx,QV2M
 vapor_kgsqm,vapor_gccm,inst3_2d_asm_Nx,TQV

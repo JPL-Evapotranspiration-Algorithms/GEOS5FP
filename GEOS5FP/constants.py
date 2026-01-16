@@ -64,6 +64,7 @@ VARIABLE_TRANSFORMATIONS = {
 COMPUTED_VARIABLES = {
     'RH',      # Relative Humidity (computed from Q, PS, Ta)
     'Ta_C',    # Temperature in Celsius (computed from Ta_K)
+    'Tmin_C',  # Minimum temperature in Celsius (computed from Tmin_K)
     'Ea_Pa',   # Actual Vapor Pressure (computed from RH and SVP)
     'SVP_Pa',  # Saturated Vapor Pressure (computed from Ta)
     'VPD_kPa', # Vapor Pressure Deficit (computed from SVP and Ea)

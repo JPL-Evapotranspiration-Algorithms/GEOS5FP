@@ -654,6 +654,14 @@ def query(
                             logger.warning("Cannot compute Ta_C: missing Ta")
                             result_gdf['Ta_C'] = None
                     
+                    elif var_name == 'Tmin_C':
+                        # Convert Tmin from Kelvin to Celsius
+                        if 'Tmin' in result_gdf.columns:
+                            result_gdf['Tmin_C'] = result_gdf['Tmin'] - 273.15
+                        else:
+                            logger.warning("Cannot compute Tmin_C: missing Tmin")
+                            result_gdf['Tmin_C'] = None
+                    
                     elif var_name == 'wind_speed_mps':
                         # Compute wind speed from U2M and V2M components
                         if 'U2M' in result_gdf.columns and 'V2M' in result_gdf.columns:
