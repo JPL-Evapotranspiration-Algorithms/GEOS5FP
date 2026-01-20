@@ -72,6 +72,8 @@ COMPUTED_VARIABLES = {
     'wind_speed_mps', # Wind speed in m/s (computed from U2M and V2M)
     'PAR_proportion', # PAR albedo fraction (computed from ALBVISDR / ALBEDO)
     'NIR_proportion', # NIR albedo fraction (computed from ALBNIRDR / ALBEDO)
+    'PAR_albedo',     # PAR albedo (computed from ALBVISDR and ALBVISDF)
+    'NIR_albedo',     # NIR albedo (computed from ALBNIRDR and ALBNIRDF)
 }
 
 VERBOSE = False
