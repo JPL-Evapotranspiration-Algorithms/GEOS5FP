@@ -212,6 +212,28 @@ result = conn.query(
 albedo_PAR = result['ALBEDO'] * result['PAR_proportion']
 ```
 
+### Combined Albedo Variables
+
+| Variable Name | Description | Formula | Units |
+|--------------|-------------|---------|-------|
+| `PAR_albedo` | Combined PAR albedo (direct + diffuse) | `ALBVISDR + ALBVISDF` | fraction |
+| `NIR_albedo` | Combined NIR albedo (direct + diffuse) | `ALBNIRDR + ALBNIRDF` | fraction |
+
+**Usage Example:**
+
+```python
+# Query combined PAR and NIR albedo
+result = conn.query(
+    ["PAR_albedo", "NIR_albedo"],
+    time_UTC=datetime(2024, 11, 15, 12),
+    lat=34.05,
+    lon=-118.25
+)
+
+print(f"PAR albedo: {result['PAR_albedo']}")
+print(f"NIR albedo: {result['NIR_albedo']}")
+```
+
 ## Variable Aliases
 
 Many variables have multiple names for convenience. All aliases point to the same underlying data:

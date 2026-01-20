@@ -1854,6 +1854,36 @@ class GEOS5FPConnection:
         NIR_proportion = rt.clip(RNIR_NWP / albedo_NWP, 0, 1)
         return NIR_proportion
 
+    def PAR_albedo(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
+        """
+        PAR albedo - the combined direct and diffuse visible/PAR albedo
+        Formula: PAR_albedo = ALBVISDR + ALBVISDF
+        Values range from 0 to 1, representing the fraction of incident PAR radiation reflected by the surface
+        :param time_UTC: date/time in UTC
+        :param geometry: optional target geometry
+        :param resampling: optional sampling method for resampling to target geometry
+        :return: raster of PAR albedo, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
+        """
+        ALBVISDR = self.ALBVISDR(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
+        ALBVISDF = self.ALBVISDF(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
+        PAR_albedo = rt.clip(ALBVISDR + ALBVISDF, 0, 1)
+        return PAR_albedo
+
+    def NIR_albedo(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
+        """
+        NIR albedo - the combined direct and diffuse near-infrared albedo
+        Formula: NIR_albedo = ALBNIRDR + ALBNIRDF
+        Values range from 0 to 1, representing the fraction of incident NIR radiation reflected by the surface
+        :param time_UTC: date/time in UTC
+        :param geometry: optional target geometry
+        :param resampling: optional sampling method for resampling to target geometry
+        :return: raster of NIR albedo, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
+        """
+        ALBNIRDR = self.ALBNIRDR(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
+        ALBNIRDF = self.ALBNIRDF(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
+        NIR_albedo = rt.clip(ALBNIRDR + ALBNIRDF, 0, 1)
+        return NIR_albedo
+
     def query(
             self,
             target_variables: Union[str, List[str]] = None,
