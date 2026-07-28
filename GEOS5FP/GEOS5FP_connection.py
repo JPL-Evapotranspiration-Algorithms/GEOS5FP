@@ -312,7 +312,9 @@ class GEOS5FPConnection:
         # logger.info(f"generating URLs under: {cl.URL(day_URL)}")
 
         if expected_hours is None:
-            if interval == 1:
+            if product_name.startswith("tavg3"):
+                expected_hours = [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
+            elif interval == 1:
                 expected_hours = np.arange(0.5, 24.5, 1)
             elif interval == 3:
                 expected_hours = np.arange(0.0, 24.0, 3)
@@ -976,8 +978,16 @@ class GEOS5FPConnection:
             timeout: float = None,
             retries: int = None,
             use_http_listing: bool = DEFAULT_USE_HTTP_LISTING) -> Raster:
-        if interval is None:
-            if product == "tavg1_2d_rad_Nx":
+        if interval is None or (expected_hours is None and product.startswith("tavg3")):
+            if product.startswith("tavg3"):
+                interval = 3
+                if expected_hours is None:
+                    expected_hours = [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
+            elif product.startswith("inst3"):
+                interval = 3
+            elif product.startswith(("tavg1", "inst1")):
+                interval = 1
+            elif product == "tavg1_2d_rad_Nx":
                 interval = 1
             elif product == "tavg1_2d_slv_Nx":
                 interval = 1
@@ -1899,7 +1909,7 @@ class GEOS5FPConnection:
             temporal_interpolation: str = TEMPORAL_INTERPOLATION,
             variable_name: Union[str, List[str]] = None,
             verbose: bool = False,
-            **kwargs) -> Union[np.ndarray, Raster, gpd.GeoDataFrame]:
+            **kwargs) -> Union[np.ndarray, Raster, gpd.GeoDataFrame, dict, pd.DataFrame]:
         if verbose is None:
             verbose = self.verbose
 
@@ -1908,25 +1918,60 @@ class GEOS5FPConnection:
         if normalized_target_variables is None and variable_name is not None:
             normalized_target_variables = variable_name
 
-        if self._should_use_legacy_raster_snapshot_query(
-                target_variables=normalized_target_variables,
-                targets_df=targets_df,
-                time_UTC=time_UTC,
-                time_range=time_range,
-                geometry=geometry,
-                lat=lat,
-                lon=lon):
-            return self._query_raster_snapshot(
-                target_variables=normalized_target_variables,
-                time_UTC=time_UTC,
-                dataset=dataset,
-                geometry=geometry,
-                resampling=resampling,
-                **kwargs
-            )
+        # Convert lat/lon to Point or MultiPoint geometry if geometry not explicitly provided
+        if geometry is None and lat is not None and lon is not None:
+            if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+                geometry = Point(lon, lat)
+            elif hasattr(lat, '__len__') and hasattr(lon, '__len__'):
+                geometry = MultiPoint([(x, y) for x, y in zip(lon, lat)])
 
-        return query(
-            target_variables=target_variables,
+        # Handle list/tuple of target variables (returns dict or combined DataFrame)
+        if isinstance(normalized_target_variables, (list, tuple)):
+            results = {}
+            for var in normalized_target_variables:
+                res = self.query(
+                    target_variables=var,
+                    targets_df=targets_df,
+                    time_UTC=time_UTC,
+                    time_range=time_range,
+                    dataset=dataset,
+                    geometry=geometry,
+                    resampling=resampling,
+                    lat=lat,
+                    lon=lon,
+                    dropna=dropna,
+                    temporal_interpolation=temporal_interpolation,
+                    verbose=verbose,
+                    **kwargs
+                )
+                results[var] = res
+            
+            # Combine DataFrames if all individual variable queries returned DataFrames
+            if len(results) > 0 and all(isinstance(r, pd.DataFrame) for r in results.values()):
+                dfs = list(results.values())
+                combined_df = dfs[0].copy()
+                for var, df in list(results.items())[1:]:
+                    if var in df.columns and var not in combined_df.columns:
+                        combined_df[var] = df[var]
+                return combined_df
+
+            return results
+
+        # Single target variable (string)
+        if normalized_target_variables is not None:
+            if targets_df is None and time_range is None and time_UTC is not None:
+                return self._query_raster_snapshot(
+                    target_variables=normalized_target_variables,
+                    time_UTC=time_UTC,
+                    dataset=dataset,
+                    geometry=geometry,
+                    resampling=resampling,
+                    **kwargs
+                )
+
+        # Delegation to module-level query function for time_range or targets_df queries
+        mod_result = query(
+            target_variables=normalized_target_variables,
             targets_df=targets_df,
             time_UTC=time_UTC,
             time_range=time_range,
@@ -1939,8 +1984,26 @@ class GEOS5FPConnection:
             temporal_interpolation=temporal_interpolation,
             variable_name=variable_name,
             verbose=verbose,
+            connection=self,
             **kwargs
         )
+
+        if mod_result is not None:
+            return mod_result
+
+        # Safety fallback if module query returned None
+        if normalized_target_variables is not None and time_UTC is not None:
+            single_var = normalized_target_variables[0] if isinstance(normalized_target_variables, (list, tuple)) else normalized_target_variables
+            return self._query_raster_snapshot(
+                target_variables=single_var,
+                time_UTC=time_UTC,
+                dataset=dataset,
+                geometry=geometry,
+                resampling=resampling,
+                **kwargs
+            )
+
+        return None
 
     def _should_use_legacy_raster_snapshot_query(
             self,
@@ -1952,18 +2015,6 @@ class GEOS5FPConnection:
             lat: Union[float, List[float], pd.Series] = None,
             lon: Union[float, List[float], pd.Series] = None) -> bool:
         if targets_df is not None or time_range is not None or time_UTC is None:
-            return False
-
-        if isinstance(time_UTC, (list, tuple, pd.Series, np.ndarray)):
-            return False
-
-        if lat is not None or lon is not None:
-            return False
-
-        if isinstance(geometry, (list, gpd.GeoSeries)):
-            return False
-
-        if geometry is not None and is_point_geometry(geometry):
             return False
 
         if target_variables is None:
@@ -2007,6 +2058,25 @@ class GEOS5FPConnection:
                 clip_min=kwargs.get("clip_min"),
                 clip_max=kwargs.get("clip_max")
             )
+
+        excluded_methods = {
+            "query", "variable", "interpolate", "download_file", "before_and_after", 
+            "product_listing", "generate_filenames", "list_GEOS5FP_granules", 
+            "list_remote_directory", "time_from_URL", "_query_raster_snapshot", 
+            "_should_use_legacy_raster_snapshot_query", "_query_point_via_opendap"
+        }
+        if hasattr(self, variable_name) and callable(getattr(self, variable_name)) and variable_name not in excluded_methods:
+            method = getattr(self, variable_name)
+            import inspect
+            sig = inspect.signature(method)
+            method_kwargs = {}
+            if "time_UTC" in sig.parameters:
+                method_kwargs["time_UTC"] = time_UTC
+            if "geometry" in sig.parameters:
+                method_kwargs["geometry"] = geometry
+            if "resampling" in sig.parameters:
+                method_kwargs["resampling"] = resampling
+            return method(**method_kwargs)
 
         if dataset is None:
             raise ValueError(
