@@ -33,8 +33,8 @@ class TestSeriesTimeInput:
         # This should work without raising an error
         result = connection.COT(time_UTC=times, geometry=geometries)
         
-        # Should return a numpy array for single-variable non-raster queries
-        assert isinstance(result, np.ndarray)
+        # Should return a DataFrame for batched point queries
+        assert isinstance(result, pd.DataFrame)
         assert len(result) == 2
     
     def test_series_with_single_geometry(self, connection):
@@ -110,7 +110,10 @@ class TestSeriesTimeInput:
         ]
         
         # This should raise a ValueError
-        with pytest.raises(ValueError, match="Number of times .* must match number of geometries"):
+        with pytest.raises(
+            ValueError,
+            match=r"Length mismatch: time_UTC has \d+ values but geometry has \d+ elements",
+        ):
             connection.COT(time_UTC=times, geometry=geometries)
     
     def test_single_time_still_works(self, connection):
@@ -122,6 +125,6 @@ class TestSeriesTimeInput:
         # This should work without raising an error
         result = connection.COT(time_UTC=time, geometry=geometry)
         
-        # Should return a numpy array for single-variable point query
-        assert isinstance(result, np.ndarray)
+        # Should return a DataFrame for point queries
+        assert isinstance(result, pd.DataFrame)
         assert len(result) == 1
