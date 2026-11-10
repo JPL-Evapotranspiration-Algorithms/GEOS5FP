@@ -1,10 +1,13 @@
+import errno
 import json
 import logging
 import os
+import shutil
+import tempfile
 from datetime import date, datetime, timedelta, time
 from os import makedirs
-from os.path import expanduser, exists, getsize
-from shutil import move
+from os.path import expanduser, exists
+from pathlib import Path
 from time import sleep
 from typing import List, Union, Any, Tuple
 import posixpath
@@ -14,8 +17,9 @@ import pandas as pd
 import geopandas as gpd
 import rasterio
 import rasters as rt
+import pooch
 import requests
-from requests.exceptions import ChunkedEncodingError, ConnectionError, SSLError
+from requests.exceptions import SSLError
 from tqdm.notebook import tqdm
 
 from dateutil import parser
@@ -30,9 +34,6 @@ from .GEOS5FP_granule import GEOS5FPGranule
 from .timer import Timer
 from .downscaling import linear_downscale, bias_correct
 from .create_robust_session import create_robust_session
-from .create_legacy_ssl_context import create_legacy_ssl_context
-from .make_head_request_with_ssl_fallback import make_head_request_with_ssl_fallback
-from .download_file import download_file
 from .get_variable_info import get_variable_info
 from .geometry_utils import is_point_geometry, extract_points
 from .query import query
@@ -46,6 +47,31 @@ except ImportError:
     query_geos5fp_point = None
 
 logger = logging.getLogger(__name__)
+
+
+def _publish_staged_file(staged_filename: str, destination_filename: str) -> None:
+    try:
+        os.replace(staged_filename, destination_filename)
+        return
+    except OSError as error:
+        if error.errno != errno.EXDEV:
+            raise
+
+    destination_directory = os.path.dirname(destination_filename) or "."
+    descriptor, temporary_filename = tempfile.mkstemp(
+        dir=destination_directory,
+        prefix=f".{os.path.basename(destination_filename)}.",
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as destination, open(staged_filename, "rb") as source:
+            shutil.copyfileobj(source, destination)
+        shutil.copystat(staged_filename, temporary_filename)
+        os.replace(temporary_filename, destination_filename)
+    finally:
+        if exists(temporary_filename):
+            os.remove(temporary_filename)
+
 
 class GEOS5FPConnection:
     DEFAULT_URL_BASE = "https://portal.nccs.nasa.gov/datashare/gmao/geos-fp/das"
@@ -393,11 +419,12 @@ class GEOS5FPConnection:
         from .exceptions import GEOS5FPDayNotAvailable, GEOS5FPGranuleNotAvailable, FailedGEOS5FPDownload, GEOS5FPSSLError
         from .validate_GEOS5FP_NetCDF_file import validate_GEOS5FP_NetCDF_file
 
-
-
         # GEOS-5 FP: check remote existence and generate filename if needed
         try:
-            head_resp = make_head_request_with_ssl_fallback(URL)
+            with create_robust_session() as session:
+                head_resp = session.head(URL, timeout=30, verify=True)
+            if head_resp.status_code != 404:
+                head_resp.raise_for_status()
         except SSLError as e:
             logger.error(f"SSL connection failed for URL: {URL}")
             logger.error(f"SSL error details: {e}")
@@ -408,17 +435,19 @@ class GEOS5FPConnection:
         if head_resp.status_code == 404:
             directory_URL = posixpath.dirname(URL)
             try:
-                dir_resp = make_head_request_with_ssl_fallback(directory_URL)
-                if dir_resp.status_code == 404:
-                    raise GEOS5FPDayNotAvailable(directory_URL)
-                else:
-                    raise GEOS5FPGranuleNotAvailable(URL)
+                with create_robust_session() as session:
+                    dir_resp = session.head(directory_URL, timeout=30, verify=True)
+                if dir_resp.status_code != 404:
+                    dir_resp.raise_for_status()
             except SSLError as e:
                 logger.error(f"SSL connection failed for directory URL: {directory_URL}")
                 raise GEOS5FPSSLError(f"Failed to establish SSL connection to directory", original_error=e, url=directory_URL)
             except Exception as e:
                 logger.error(f"Failed to check directory existence: {e}")
                 raise FailedGEOS5FPDownload(f"Connection error checking directory: {e}")
+            if dir_resp.status_code == 404:
+                raise GEOS5FPDayNotAvailable(directory_URL)
+            raise GEOS5FPGranuleNotAvailable(URL)
 
         if filename is None:
             filename = self.download_filename(URL)
@@ -443,23 +472,59 @@ class GEOS5FPConnection:
                 except OSError as e:
                     logger.warning(f"failed to remove invalid file {filename}: {e}")
 
+        download_root = Path(os.path.expanduser(self.download_directory)).resolve()
+        staging_root = Path(pooch.os_cache("GEOS5FP")).expanduser().resolve()
+        if staging_root.is_relative_to(download_root):
+            raise FailedGEOS5FPDownload(
+                f"Pooch staging directory must be outside the download directory: {staging_root}"
+            )
+        makedirs(staging_root, exist_ok=True)
+        makedirs(os.path.dirname(expanded_filename) or ".", exist_ok=True)
+
         # Track download attempts with validation
         download_attempts = 0
         max_download_attempts = retries
+        downloader = pooch.HTTPDownloader(
+            chunk_size=1024 * 1024,
+            timeout=120,
+        )
         
         while download_attempts < max_download_attempts:
             download_attempts += 1
             logger.info(f"download attempt {download_attempts}/{max_download_attempts}: {URL}")
             
             try:
-                result_filename = download_file(
-                    URL=URL,
-                    filename=filename,
-                    retries=1,  # Handle retries at this level
-                    wait_seconds=wait_seconds
-                )
+                with tempfile.TemporaryDirectory(dir=staging_root) as staging_directory:
+                    staged_filename = os.path.join(
+                        staging_directory,
+                        os.path.basename(expanded_filename),
+                    )
+                    if Path(staging_directory).resolve().is_relative_to(download_root):
+                        raise FailedGEOS5FPDownload(
+                            "Pooch staging directory must be outside the download directory"
+                        )
+                    downloader(
+                        url=URL,
+                        output_file=staged_filename,
+                        pooch=None,
+                    )
+                    if not exists(staged_filename) or os.path.getsize(staged_filename) == 0:
+                        raise IOError(f"zero-size or missing file from download: {URL}")
+                    _publish_staged_file(staged_filename, expanded_filename)
+                result_filename = filename
+            except SSLError as e:
+                logger.error(f"SSL error during download: {e}")
+                if download_attempts >= max_download_attempts:
+                    raise GEOS5FPSSLError(
+                        "Failed to establish SSL connection",
+                        original_error=e,
+                        url=URL,
+                    )
+                logger.warning(f"download attempt {download_attempts} failed: {e}")
+                logger.warning(f"waiting {wait_seconds} seconds before retry...")
+                sleep(wait_seconds)
+                continue
             except FailedGEOS5FPDownload as e:
-                # Already a specific download failure
                 if download_attempts >= max_download_attempts:
                     raise
                 logger.warning(f"download attempt {download_attempts} failed: {e}")
