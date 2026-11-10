@@ -25,6 +25,34 @@ The GEOS5FP library includes a comprehensive validation system for NetCDF files 
 - **Automatic Cleanup**: Removes invalid or corrupted files automatically
 - **Detailed Logging**: Provides visibility into validation results
 
+### Download Destination and Staging
+
+`GEOS5FPConnection.download_file()` is the package API for downloading a
+granule. The configured `download_directory` (default: `~/data/GEOS5FP`) is the
+final destination. When a filename is not supplied, the connection creates a
+date-based subdirectory.
+
+Pooch's HTTP downloader streams response chunks into a fresh temporary
+directory under `pooch.os_cache("GEOS5FP")`, outside the configured download
+directory. This temporary staging area is cleaned up after each attempt; it is
+not a persistent cache. Once the network transfer completes, the file is
+published to the destination and validated. Invalid files are removed and
+retried.
+
+When staging and destination are on different filesystems, the completed file
+is copied to a temporary file beside the destination and then atomically
+renamed. A sync client may observe this brief publication file, but the network
+download itself is not written into the synchronized destination.
+
+```python
+from GEOS5FP import GEOS5FPConnection
+
+conn = GEOS5FPConnection(download_directory="~/data/GEOS5FP")
+# Set granule_url to the URL of the requested GEOS-5 FP granule.
+granule = conn.download_file(URL=granule_url)
+print(granule.filename)
+```
+
 ## Validation Module
 
 ### Core Function: `validate_GEOS5FP_NetCDF_file()`
@@ -298,25 +326,17 @@ for filename in valid_files:
 Integrate with download functions to automatically retry failed downloads.
 
 ```python
-from GEOS5FP import validate_GEOS5FP_NetCDF_file
-import requests
+from GEOS5FP import GEOS5FP
+import os
 
 def download_and_verify(url, filename, max_retries=3):
-    for attempt in range(max_retries):
-        # Download file
-        response = requests.get(url)
-        with open(filename, 'wb') as f:
-            f.write(response.content)
-        
-        # Verify download
-        result = validate_GEOS5FP_NetCDF_file(filename)
-        if result.is_valid:
-            return filename
-        else:
-            print(f"Attempt {attempt + 1} failed validation, retrying...")
-            os.remove(filename)
-    
-    raise Exception("Download failed after all retries")
+    connection = GEOS5FP(download_directory=os.path.dirname(filename) or ".")
+    granule = connection.download_file(
+        URL=url,
+        filename=filename,
+        retries=max_retries,
+    )
+    return granule.filename
 ```
 
 ### Data Pipeline Integration

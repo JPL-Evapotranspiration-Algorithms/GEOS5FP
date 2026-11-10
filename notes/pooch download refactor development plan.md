@@ -56,10 +56,10 @@ the completed file to the configured destination.
      module.
    - [x] Update tests, examples, and utility scripts that import the submodule
      or call its function directly. Retain the connection method API.
-4. [ ] **Update documentation**
-   - [ ] Document the Pooch dependency and the staging/destination behavior
+4. [x] **Update documentation**
+   - [x] Document the Pooch dependency and the staging/destination behavior
      where download configuration is described.
-   - [ ] Clarify that the configured download directory remains the final
+   - [x] Clarify that the configured download directory remains the final
      destination, while in-progress transfer files are staged elsewhere.
 
 ## Validation

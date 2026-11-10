@@ -98,6 +98,7 @@ def test_download_uses_pooch_staging_and_retries(tmp_path, monkeypatch):
 
     assert result.filename == str(destination)
     assert destination.read_bytes() == b"GEOSFP"
+    assert session.head.call_args.kwargs["verify"] is True
     assert len(download_attempts) == 2
     assert all(call["stream"] is True for call in download_attempts)
     assert all(call["timeout"] == 120 for call in download_attempts)
