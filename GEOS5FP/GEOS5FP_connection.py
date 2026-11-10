@@ -485,6 +485,7 @@ class GEOS5FPConnection:
         download_attempts = 0
         max_download_attempts = retries
         downloader = pooch.HTTPDownloader(
+            progressbar=True,
             chunk_size=1024 * 1024,
             timeout=120,
         )
