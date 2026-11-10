@@ -1,91 +1,53 @@
-# Testing and Test Results Guide
+# Testing and Test Guidance
 
 ## Overview
 
-This guide documents the test results for the GEOS5FP library, including SSL error handling improvements, validation system tests, and best practices for writing pytest-compliant tests.
+This guide describes how to run the GEOS5FP test suite and what the download
+and validation tests cover. Test results depend on the checkout and environment;
+this guide does not claim a fixed suite count or runtime.
 
-## Test Results Summary
+## Test Scope
 
-### Overall Test Status
+The suite includes unit tests for connection setup, GEOS-5 FP file validation,
+and data retrieval behavior. The download transport tests use mocked HTTP
+responses, so they do not depend on a live NASA server or large granule
+downloads.
 
-✅ **All tests passing!**
+### Download Transport Tests
 
-The GEOS5FP library has a comprehensive test suite with 46+ tests covering:
-- Core functionality
-- SSL error handling
-- File validation
-- Data retrieval methods
-- Integration tests
-- Backward compatibility
+`tests/test_connection_download.py` covers:
 
-### Test Execution
+- Pooch's streamed HTTP downloader writing chunks to temporary staging outside
+  the configured destination directory
+- Verified HTTPS defaults for the HEAD and GET requests
+- Retry behavior after a transient network failure
+- Publication of a completed download, including a simulated cross-filesystem
+  move
+- Missing-day and missing-granule exception mapping
+
+These tests exercise the package's public `GEOS5FPConnection.download_file()`
+method. They do not test legacy SSL fallback behavior.
+
+### Run Tests
+
+Run the complete suite from the repository root:
 
 ```bash
-# Run all tests
-make test
-
-# Or using pytest directly
-pytest
-
-# Run with verbose output
-pytest -v
-
-# Run specific test file
-pytest tests/test_ssl_handling.py
+python -m pytest
 ```
 
-## SSL Error Handling Tests
+Run the focused download and connection tests:
 
-### Test Results
-
-The SSL error handling improvements have been successfully implemented and tested:
-
-```
-============================= 46 passed in 18.73s ==============================
+```bash
+python -m pytest tests/test_connection_download.py tests/test_connection.py
 ```
 
-**All 46 tests passed**, including:
-- 2 SSL error handling tests (`test_ssl_handling.py`)
-- 2 SSL integration tests (`test_integration_ssl.py`) 
-- 1 SSL simple test (`test_ssl_simple.py`)
-- 41 existing tests (all still passing)
+Run with verbose output or coverage:
 
-### Key Functionality Verified
-
-1. **SSL Connection Handling** ✅
-   - Successfully connects to NASA's GEOS-5 FP data portal
-   - Handles SSL/TLS protocol issues gracefully
-   - Implements fallback mechanisms for problematic connections
-
-2. **Download Functionality** ✅
-   - `download_file()` method works with enhanced SSL handling
-   - Proper retry logic for SSL connection failures
-   - Comprehensive error reporting and logging
-
-3. **Data Retrieval Methods** ✅
-   - The specific failing scenarios now work
-   - Methods like `ozone_cm()` and `AOT()` successfully handle SSL connections
-   - Integration with GEOS-5 FP data retrieval is functional
-
-4. **Backward Compatibility** ✅
-   - All existing tests continue to pass
-   - No breaking changes to the API
-   - Existing user code works without modifications
-
-### Original Error Resolution
-
-The original SSL error has been resolved:
-
+```bash
+python -m pytest -v
+python -m pytest --cov=GEOS5FP
 ```
-requests.exceptions.SSLError: HTTPSConnectionPool(host='portal.nccs.nasa.gov', port=443): 
-Max retries exceeded... [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol
-```
-
-**Resolution achieved through:**
-- Robust session creation with proper retry strategies
-- SSL fallback mechanisms (secure first, fallback if needed)
-- Enhanced error handling and logging
-- Comprehensive testing to ensure reliability
 
 ## Validation System Tests
 
@@ -101,65 +63,14 @@ The validation system includes comprehensive tests covering:
 - ✅ Directory batch validation
 - ✅ Error handling for various failure scenarios
 
-All validation tests pass, ensuring the system reliably identifies valid and invalid files.
+The validation tests check that the validator identifies valid and invalid
+files and reports the associated results.
 
 ## Pytest Best Practices
 
-### The Pytest Warning Problem
-
-Early versions of the test suite generated pytest warnings because test functions were returning boolean values:
-
-```
-PytestReturnNotNoneWarning: Test functions should return None, 
-but test_enhanced_ssl_handling.py::test_enhanced_ssl_handling returned <class 'bool'>.
-```
-
-### Root Cause
-
-The SSL test functions were written in a style that returned `True`/`False` for success/failure, which is not the proper pytest pattern.
-
-### Pytest Expectations
-
-Pytest expects:
-- Test functions to return `None`
-- Use `assert` statements for validation
-- Use `pytest.fail()` for explicit test failures
-- Use `pytest.skip()` for conditional skipping
-
-### Fix Applied
-
-#### Before (Incorrect)
-
-```python
-def test_enhanced_ssl_handling():
-    try:
-        # ... test logic ...
-        if response.status_code == 200:
-            return True  # ❌ Wrong - test should not return values
-        else:
-            return False  # ❌ Wrong
-    except Exception as e:
-        return False  # ❌ Wrong
-```
-
-#### After (Correct)
-
-```python
-import pytest
-
-def test_enhanced_ssl_handling():
-    try:
-        # ... test logic ...
-        # ✅ Use assertions for validation
-        assert response.status_code in [200, 404], f"Unexpected status code: {response.status_code}"
-        # Function returns None implicitly
-    except SSLError as e:
-        # ✅ Use pytest.fail() for explicit failures
-        pytest.fail(f"SSL error occurred: {e}")
-    except ImportError as e:
-        # ✅ Use pytest.skip() for missing dependencies
-        pytest.skip(f"Required dependency not available: {e}")
-```
+Pytest test functions should use assertions rather than return `True` or
+`False`. Use `pytest.fail()` for explicit failures and `pytest.skip()` when a
+test's prerequisites are unavailable.
 
 ### Assertion Patterns
 
@@ -182,16 +93,16 @@ def test_http_request():
     assert response.status_code in [200, 404], f"Unexpected status code: {response.status_code}"
 ```
 
-#### 3. Error Detection
+#### 3. Expected Errors
 
 ```python
-def test_ssl_handling():
-    try:
-        result = operation_that_might_fail()
-        # Verify specific error did not occur
-        assert "UNEXPECTED_EOF_WHILE_READING" not in str(result)
-    except SSLError as e:
-        pytest.fail(f"SSL error occurred: {e}")
+import pytest
+
+def test_missing_day():
+    from GEOS5FP.exceptions import GEOS5FPDayNotAvailable
+
+    with pytest.raises(GEOS5FPDayNotAvailable):
+        connection.download_file(URL=url)
 ```
 
 #### 4. Explicit Failures
@@ -216,30 +127,12 @@ def test_optional_feature():
     # Test code using optional_dependency...
 ```
 
-### Results After Fix
-
-#### Before Fix
-```
-========================================================================= warnings summary =========================================================================
-test_enhanced_ssl_handling.py::test_enhanced_ssl_handling - PytestReturnNotNoneWarning
-test_enhanced_ssl_handling.py::test_geos5fp_integration - PytestReturnNotNoneWarning  
-test_original_failure.py::test_problematic_url - PytestReturnNotNoneWarning
-test_original_failure.py::test_aot_interpolation - PytestReturnNotNoneWarning
-================================================================= 50 passed, 4 warnings in 16.51s ==================================================================
-```
-
-#### After Fix
-```
-======================================================================= 50 passed in 11.15s =========================================================================
-```
-
 ### Benefits of Proper Pytest Usage
 
-1. **Clean Test Output** - No more pytest warnings
+1. **Clean Test Output** - Avoid warnings about returned values
 2. **Better Error Messages** - More descriptive assertion messages
-3. **Proper Test Semantics** - Following pytest best practices
-4. **Maintainability** - Easier to understand test logic and failures
-5. **Performance** - Slightly faster execution (11.15s vs 16.51s)
+3. **Proper Test Semantics** - Follow pytest best practices
+4. **Maintainability** - Make test intent and failures easier to understand
 
 ## Writing New Tests
 
@@ -333,38 +226,38 @@ def test_with_fixtures(geos5fp_connection, test_coordinates):
 
 ```bash
 # Run all tests
-pytest
+python -m pytest
 
 # Run with coverage
-pytest --cov=GEOS5FP
+python -m pytest --cov=GEOS5FP
 
 # Run specific test file
-pytest tests/test_ssl_handling.py
+python -m pytest tests/test_connection_download.py
 
 # Run specific test function
-pytest tests/test_ssl_handling.py::test_enhanced_ssl_handling
+python -m pytest tests/test_connection_download.py::test_download_uses_pooch_staging_and_retries
 
 # Run with verbose output
-pytest -v
+python -m pytest -v
 
 # Run with detailed output including print statements
-pytest -v -s
+python -m pytest -v -s
 ```
 
 ### Test Filtering
 
 ```bash
 # Run tests matching pattern
-pytest -k "ssl"
+python -m pytest -k "download"
 
 # Run tests in specific directory
-pytest tests/
+python -m pytest tests/
 
 # Run only failed tests from last run
-pytest --lf
+python -m pytest --lf
 
 # Run failed tests first, then others
-pytest --ff
+python -m pytest --ff
 ```
 
 ### Continuous Integration
@@ -383,32 +276,22 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v2
         with:
-          python-version: '3.9'
+          python-version: '3.10'
       - name: Install dependencies
         run: |
-          pip install -e .
-          pip install pytest pytest-cov
+          pip install -e ".[dev]"
       - name: Run tests
-        run: pytest --cov=GEOS5FP
+        run: python -m pytest --cov=GEOS5FP
 ```
 
-## Performance Metrics
+## Test Coverage
 
-### Test Execution Times
-
-- Full test suite: ~18-20 seconds
-- SSL tests: ~5-7 seconds
-- Validation tests: ~3-5 seconds
-- Integration tests: ~8-10 seconds
-
-### Coverage
-
-The test suite provides comprehensive coverage of:
+The test suite covers:
 - Core data retrieval methods
-- SSL error handling and fallback
+- Download staging, retries, verified HTTPS defaults, and download exceptions
 - File validation and integrity checks
 - Exception handling
-- Backward compatibility
+- Package imports and connection behavior
 
 ## Troubleshooting Test Failures
 
@@ -416,38 +299,37 @@ The test suite provides comprehensive coverage of:
 
 #### 1. Network Connectivity
 ```
-FAILED tests/test_ssl_handling.py::test_connection - Connection timeout
+HTTPSConnectionPool(host='portal.nccs.nasa.gov', port=443): Read timed out
 ```
 
-**Solution**: Check internet connection and NASA portal availability.
+**Solution**: Check internet access, proxy configuration, and NASA portal
+availability. The focused download transport tests use mocked responses and do
+not require the live portal.
 
 #### 2. Missing Dependencies
 ```
-FAILED tests/test_validation.py::test_netcdf_validation - ImportError: No module named 'rasterio'
+ImportError: No module named 'rasterio'
 ```
 
 **Solution**: Install required dependencies:
 ```bash
-pip install rasterio netcdf4 xarray
+pip install -e ".[dev]"
 ```
 
 #### 3. SSL Certificate Issues
 ```
-FAILED tests/test_ssl_handling.py::test_ssl_fallback - SSLError
+requests.exceptions.SSLError: certificate verify failed
 ```
 
-**Solution**: Update system SSL certificates or check firewall settings.
+**Solution**: Check the system or corporate CA certificates, proxy
+configuration, and firewall. Do not disable certificate verification; see the
+[SSL Troubleshooting Guide](./SSL%20Troubleshooting%20Guide.md).
 
 ## Summary
 
-The GEOS5FP library maintains a robust test suite that:
+The GEOS5FP test suite:
 
-1. ✅ Validates all core functionality
-2. ✅ Ensures SSL error handling works correctly
-3. ✅ Verifies file validation and integrity checks
-4. ✅ Maintains backward compatibility
-5. ✅ Follows pytest best practices
-6. ✅ Provides clear error messages
-7. ✅ Runs efficiently in CI/CD environments
-
-All tests are passing, and the library is production-ready!
+1. Covers core functionality, downloads, and NetCDF validation
+2. Tests the downloader with mocked HTTP responses
+3. Checks HTTPS verification defaults and GEOS5FP-specific exceptions
+4. Can be run locally or in CI with `python -m pytest`

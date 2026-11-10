@@ -135,41 +135,15 @@ def enhanced_download_with_validation():
     
     def download_with_validation(url: str, filename: str, max_retries: int = 3):
         """
-        Enhanced download function that validates files after download.
+        Download and validate a GEOS-5 FP file using the connection API.
         """
-        from GEOS5FP.download_file import download_file
-        
-        for attempt in range(max_retries):
-            try:
-                # Download the file
-                downloaded_file = download_file(url, filename)
-                
-                # Validate the downloaded file
-                result = validate_GEOS5FP_NetCDF_file(downloaded_file)
-                
-                if result.is_valid:
-                    logger.info(f"Successfully downloaded and validated: {filename}")
-                    logger.info(f"File size: {result.metadata.get('file_size_mb', 'unknown')} MB")
-                    return downloaded_file
-                else:
-                    logger.warning(f"Downloaded file failed validation: {filename}")
-                    for error in result.errors:
-                        logger.warning(f"  Validation error: {error}")
-                    
-                    # Remove invalid file
-                    if os.path.exists(downloaded_file):
-                        os.remove(downloaded_file)
-                        logger.info(f"Removed invalid file: {downloaded_file}")
-                    
-                    if attempt < max_retries - 1:
-                        logger.info(f"Retrying download (attempt {attempt + 2}/{max_retries})...")
-                    
-            except Exception as e:
-                logger.error(f"Download attempt {attempt + 1} failed: {e}")
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying download (attempt {attempt + 2}/{max_retries})...")
-        
-        raise Exception(f"Failed to download valid file after {max_retries} attempts")
+        connection = GEOS5FP(download_directory=os.path.dirname(filename) or ".")
+        granule = connection.download_file(
+            URL=url,
+            filename=filename,
+            retries=max_retries,
+        )
+        return granule.filename
     
     print("\nEnhanced Download with Validation Example")
     print("=" * 50)

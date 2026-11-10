@@ -32,6 +32,32 @@ from datetime import datetime
 conn = GEOS5FPConnection()
 ```
 
+### Downloading and Storage
+
+`GEOS5FPConnection.download_file()` downloads and validates a granule. Its
+`download_directory` is the final destination for files; it defaults to
+`~/data/GEOS5FP` and can be set when creating the connection:
+
+```python
+conn = GEOS5FPConnection(download_directory="~/data/GEOS5FP")
+# Set granule_url to the URL of the requested GEOS-5 FP granule.
+granule = conn.download_file(URL=granule_url)
+print(granule.filename)
+```
+
+Downloads use Pooch's chunked HTTP downloader, installed automatically as a
+GEOS5FP runtime dependency. Each attempt stages the network transfer in a fresh
+temporary directory under `pooch.os_cache("GEOS5FP")`, outside the configured
+download directory. The staging directory is removed after the attempt; this is
+not a persistent Pooch data cache.
+
+Only after the transfer completes is the file published to the destination and
+NetCDF-validated. If the staging area and destination are on different
+filesystems, publication copies the completed download to a temporary file next
+to the destination and atomically replaces the final path. The sync client may
+see that brief publication file, but network chunks are never streamed into the
+configured download directory. HTTPS certificate verification remains enabled.
+
 ### Generating Raster Data
 
 Generate georeferenced raster data for a specific time and optional target geometry:
