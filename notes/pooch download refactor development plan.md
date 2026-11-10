@@ -18,10 +18,13 @@ directory would not meet this requirement.
 - Keep `GEOS5FPConnection.download_file` as the public package-level operation;
   remove only the standalone `GEOS5FP.download_file` module and its direct
   imports.
-- Use a temporary Pooch cache/staging directory outside the configured
-  `download_directory`. After a successful transfer, move the completed file to
-  its final destination, then run the existing NetCDF validation. Clean up
-  staging files on success and failure.
+- Use a fresh `TemporaryDirectory` for each Pooch retrieval, outside the
+  configured `download_directory`. Pass it as Pooch's cache path with
+  `known_hash=None`, then move the completed file to its final destination and
+  run the existing NetCDF validation. A per-download directory avoids stale
+  cache entries when no authoritative checksum is available and keeps Pooch's
+  in-progress file out of synchronized folders. Clean up staging files on
+  success and failure.
 - Preserve the existing valid-file short circuit, invalid-file cleanup,
   retry behavior, GEOS-5 FP-specific 404 exceptions, and returned
   `GEOS5FPGranule` behavior.

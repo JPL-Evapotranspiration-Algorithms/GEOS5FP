@@ -24,6 +24,7 @@ dependencies = [
     "netcdf4",
     "numpy",
     "pandas",
+    "pooch",
     "pyproj",
     "python-dateutil",
     "pytictoc",
