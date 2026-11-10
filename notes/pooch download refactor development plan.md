@@ -51,10 +51,10 @@ the completed file to the configured destination.
      do not multiply Pooch retries by connection retries.
    - [x] Publish only a completed staged file to the requested destination and
      clean up on all error paths, including cross-filesystem publication.
-3. [ ] **Remove the standalone module and update callers**
-   - [ ] Remove `GEOS5FP/download_file.py` and its import from the connection
+3. [x] **Remove the standalone module and update callers**
+   - [x] Remove `GEOS5FP/download_file.py` and its import from the connection
      module.
-   - [ ] Update tests, examples, and utility scripts that import the submodule
+   - [x] Update tests, examples, and utility scripts that import the submodule
      or call its function directly. Retain the connection method API.
 4. [ ] **Update documentation**
    - [ ] Document the Pooch dependency and the staging/destination behavior
@@ -73,7 +73,7 @@ the completed file to the configured destination.
   HTTP failure handling.
 - [x] Run focused connection/downloader tests.
 - [ ] Run the full test suite and package build.
-- [ ] Confirm no remaining package, test, example, or script imports
+- [x] Confirm no remaining package, test, example, or script imports
   `GEOS5FP.download_file` after the module is removed.
 
 ## Acceptance criteria

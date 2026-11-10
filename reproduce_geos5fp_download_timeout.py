@@ -5,20 +5,20 @@ The reported failure occurred while downloading this GEOS-5 FP aerosol granule:
 
     https://portal.nccs.nasa.gov/datashare/gmao/geos-fp/das/Y2026/M10/D03/GEOS.fp.asm.tavg3_2d_aer_Nx.20261003_0730.V01.nc4
 
-The traceback ended at ``f.write(chunk)`` in ``GEOS5FP/download_file.py`` with
+The traceback ended while writing a response chunk with
 ``TimeoutError: [Errno 60] Operation timed out``. The original destination was
 under ``~/data/...``; on the affected Mac, ``~/data`` resolves into
 ``~/Library/CloudStorage/OneDrive-JPL/data``. This makes a write/sync issue
 plausible, but does not prove it: Chrome may use a different HTTP stack and
 save to a different directory.
 
-This script calls GEOS5FP's own ``download_file`` function, so it exercises its
-HTTP request, 1 MiB response-chunk loop, and file writes. Run it once with the
-original OneDrive destination and again with a local directory outside cloud
-storage (for example ``~/tmp/geos5fp-test``). Comparing those runs helps
-separate destination-write failures from failures that also occur on local
-storage. The output filename is unique so an existing cached granule cannot
-cause the downloader to skip the transfer.
+This script calls ``GEOS5FPConnection.download_file``, exercising the package's
+Pooch HTTP downloader, temporary staging, and destination publication. Run it
+once with the original OneDrive destination and again with a local directory
+outside cloud storage (for example ``~/tmp/geos5fp-test``). Comparing those
+runs helps separate destination-write failures from failures that also occur
+on local storage. Each run uses a unique directory so an existing cached
+granule cannot cause the method to skip the transfer.
 
 Run from the root of a GEOS5FP checkout (or an environment where that checkout
 is the imported GEOS5FP package):
@@ -39,12 +39,11 @@ for a quicker diagnostic run.
 import argparse
 import inspect
 import logging
-import os
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from GEOS5FP.download_file import download_file
+from GEOS5FP import GEOS5FP
 
 
 GRANULE_URL = (
@@ -91,15 +90,18 @@ def main() -> None:
     destination_dir.mkdir(parents=True, exist_ok=True)
 
     granule_name = Path(urlsplit(GRANULE_URL).path).name
-    stem, extension = os.path.splitext(granule_name)
-    target_filename = destination_dir / f"{stem}.repro-{uuid4().hex}{extension}"
+    target_filename = destination_dir / f"repro-{uuid4().hex}" / granule_name
+    geos5fp = GEOS5FP(download_directory=str(destination_dir))
 
-    print(f"GEOS5FP downloader source: {inspect.getsourcefile(download_file)}")
+    print(
+        "GEOS5FP downloader source: "
+        f"{inspect.getsourcefile(type(geos5fp).download_file)}"
+    )
     print(f"URL: {GRANULE_URL}")
     print(f"Destination: {target_filename}")
     print(f"Resolved destination: {target_filename.resolve()}")
 
-    result = download_file(
+    result = geos5fp.download_file(
         URL=GRANULE_URL,
         filename=str(target_filename),
         retries=args.retries,

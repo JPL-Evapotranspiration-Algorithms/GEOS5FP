@@ -30,7 +30,7 @@ def test_ssl_error_handling_integration():
         sys.path.insert(0, '/Users/halverso/Projects/GEOS5FP')
         
         # Test the HTTP session creation and SSL handling directly
-        from GEOS5FP.GEOS5FP_connection import create_robust_session, make_head_request_with_ssl_fallback
+        from GEOS5FP.make_head_request_with_ssl_fallback import make_head_request_with_ssl_fallback
         
         print("✓ Successfully imported SSL handling functions")
         
@@ -76,32 +76,5 @@ def test_ssl_error_handling_integration():
         else:
             print("✓ SUCCESS: Original SSL error was handled, got different error type")
             assert True  # Test passed - original SSL error was handled
-
-def test_download_file_function():
-    """Test the download_file function with SSL handling."""
-    
-    print("\nTesting download_file function SSL handling")
-    print("-" * 50)
-    
-    try:
-        sys.path.insert(0, '/Users/halverso/Projects/GEOS5FP')
-        from GEOS5FP.download_file import download_file
-        
-        print("✓ Successfully imported download_file function")
-        
-        # Test with a small file (just checking SSL handling, not actually downloading)
-        test_url = "https://portal.nccs.nasa.gov/datashare/gmao/geos-fp/das/"
-        
-        # We're not actually going to download, just test that the SSL handling code works
-        print("✓ download_file function is available with SSL error handling")
-        assert True  # Test passed
-        
-    except ImportError as e:
-        print(f"ℹ Import issue (expected due to dependencies): {e}")
-        assert True  # This is OK, we mainly wanted to test the core SSL handling
-        
-    except Exception as e:
-        print(f"✗ Unexpected error: {type(e).__name__}: {e}")
-        assert False, f"Unexpected error: {e}"
 
 # Tests are run by pytest, no need for main block

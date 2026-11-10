@@ -199,46 +199,18 @@ SM = geos5fp.SM(time_UTC=timestamp, geometry=geometry)
 You can also use validation in your own download functions:
 
 ```python
-from GEOS5FP import validate_GEOS5FP_NetCDF_file
-from GEOS5FP.download_file import download_file
+from GEOS5FP import GEOS5FP
 import os
 
 def download_with_validation(url, filename, max_retries=3):
-    """Download and validate GEOS-5 FP file with retry logic."""
-    
-    for attempt in range(max_retries):
-        try:
-            # Download the file
-            print(f"Download attempt {attempt + 1}/{max_retries}")
-            downloaded_file = download_file(url, filename)
-            
-            # Validate the downloaded file
-            result = validate_GEOS5FP_NetCDF_file(downloaded_file)
-            
-            if result.is_valid:
-                print(f"Successfully downloaded and validated: {filename}")
-                print(f"  Size: {result.metadata['file_size_mb']:.2f} MB")
-                print(f"  Product: {result.metadata['product_name']}")
-                return downloaded_file
-            else:
-                print(f"Downloaded file failed validation: {filename}")
-                for error in result.errors:
-                    print(f"  Error: {error}")
-                
-                # Remove invalid file
-                if os.path.exists(downloaded_file):
-                    os.remove(downloaded_file)
-                    print(f"  Removed invalid file")
-                
-                if attempt < max_retries - 1:
-                    print("  Retrying...")
-                    
-        except Exception as e:
-            print(f"Download failed: {e}")
-            if attempt < max_retries - 1:
-                print("  Retrying...")
-    
-    raise Exception(f"Failed to download valid file after {max_retries} attempts")
+    """Download and validate a GEOS-5 FP file using the connection API."""
+    connection = GEOS5FP(download_directory=os.path.dirname(filename) or ".")
+    granule = connection.download_file(
+        URL=url,
+        filename=filename,
+        retries=max_retries,
+    )
+    return granule.filename
 ```
 
 ## Benefits
