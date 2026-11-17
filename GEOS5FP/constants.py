@@ -62,18 +62,20 @@ VARIABLE_TRANSFORMATIONS = {
 # Computed/derived variables that require calling methods
 # These cannot be queried directly but must be computed from other variables
 COMPUTED_VARIABLES = {
-    'RH',      # Relative Humidity (computed from Q, PS, Ta)
-    'Ta_C',    # Temperature in Celsius (computed from Ta_K)
-    'Tmin_C',  # Minimum temperature in Celsius (computed from Tmin_K)
-    'Ea_Pa',   # Actual Vapor Pressure (computed from RH and SVP)
-    'SVP_Pa',  # Saturated Vapor Pressure (computed from Ta)
-    'VPD_kPa', # Vapor Pressure Deficit (computed from SVP and Ea)
-    'Td_K',    # Dew Point Temperature (computed from Ta and RH)
+    'RH',             # Relative Humidity (computed from Q, PS, Ta)
+    'Ta_C',           # Temperature in Celsius (computed from Ta_K)
+    'Tmin_C',         # Minimum temperature in Celsius (computed from Tmin_K)
+    'Ea_Pa',          # Actual Vapor Pressure (computed from RH and SVP)
+    'SVP_Pa',         # Saturated Vapor Pressure (computed from Ta)
+    'VPD_kPa',        # Vapor Pressure Deficit (computed from SVP and Ea)
+    'Td_K',           # Dew Point Temperature (computed from Ta and RH)
     'wind_speed_mps', # Wind speed in m/s (computed from U2M and V2M)
     'PAR_proportion', # PAR albedo fraction (computed from ALBVISDR / ALBEDO)
     'NIR_proportion', # NIR albedo fraction (computed from ALBNIRDR / ALBEDO)
     'PAR_albedo',     # PAR albedo (computed from ALBVISDR and ALBVISDF)
     'NIR_albedo',     # NIR albedo (computed from ALBNIRDR and ALBNIRDF)
+    'albedo_visible', # Visible surface albedo (ALBEDO * (ALBVISDR / ALBEDO) = ALBVISDR)
+    'albedo_NIR',     # NIR surface albedo (ALBEDO * (ALBNIRDR / ALBEDO) = ALBNIRDR)
 }
 
 VERBOSE = False

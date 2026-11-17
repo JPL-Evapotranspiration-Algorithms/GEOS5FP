@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 import errno
 import json
 import logging
@@ -6,7 +7,7 @@ import shutil
 import tempfile
 from datetime import date, datetime, timedelta, time
 from os import makedirs
-from os.path import expanduser, exists
+from os.path import expanduser, exists, join
 from pathlib import Path
 from time import sleep
 from typing import List, Union, Any, Tuple
@@ -36,7 +37,7 @@ from .downscaling import linear_downscale, bias_correct
 from .create_robust_session import create_robust_session
 from .get_variable_info import get_variable_info
 from .geometry_utils import is_point_geometry, extract_points
-from .query import query
+from .query import query as _query_func
 
 # Optional import for point queries via OPeNDAP
 try:
@@ -46,7 +47,54 @@ except ImportError:
     HAS_OPENDAP_SUPPORT = False
     query_geos5fp_point = None
 
+try:
+    from filelock import FileLock
+except ImportError:
+    FileLock = None
+
 logger = logging.getLogger(__name__)
+
+
+def _safe_remove(path: str) -> bool:
+    """Remove a file if it exists, ignoring concurrent deletion races."""
+    try:
+        os.remove(path)
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        if error.errno == errno.ENOENT:
+            return False
+        raise
+
+
+@contextmanager
+def _granule_file_lock(destination_filename: str):
+    """Acquire an exclusive inter-process lock for a target granule path."""
+    lock_filename = f"{destination_filename}.lock"
+    makedirs(os.path.dirname(lock_filename) or ".", exist_ok=True)
+
+    if FileLock is not None:
+        with FileLock(lock_filename):
+            yield
+        return
+
+    with open(lock_filename, "a+") as lock_file:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _publish_staged_file(staged_filename: str, destination_filename: str) -> None:
@@ -69,8 +117,7 @@ def _publish_staged_file(staged_filename: str, destination_filename: str) -> Non
         shutil.copystat(staged_filename, temporary_filename)
         os.replace(temporary_filename, destination_filename)
     finally:
-        if exists(temporary_filename):
-            os.remove(temporary_filename)
+        _safe_remove(temporary_filename)
 
 
 class GEOS5FPConnection:
@@ -78,30 +125,22 @@ class GEOS5FPConnection:
     DEFAULT_TIMEOUT_SECONDS = 500
     DEFAULT_RETRIES = 3
 
+    query = _query_func
+
     def __init__(
             self,
-            # working_directory parameter removed
             download_directory: str = None,
             remote: str = None,
             save_products: bool = False,
             verbose: bool = True,
             use_opendap: bool = True,
             allow_fallback: bool = False):
-        # working_directory logic removed
-
-        # working_directory expansion logic removed
-
-        # working_directory logging removed
-
         if download_directory is None:
             download_directory = DEFAULT_DOWNLOAD_DIRECTORY
-
-        # logger.info(f"GEOS-5 FP download directory: {cl.dir(download_directory)}")
 
         if remote is None:
             remote = self.DEFAULT_URL_BASE
 
-        # self.working_directory assignment removed
         self.download_directory = download_directory
         self.remote = remote
         self._listings = {}
@@ -129,57 +168,23 @@ class GEOS5FPConnection:
 
         if status == 200:
             logger.info(f"remote verified with status {cl.val(200)} in " + cl.time(
-                f"{duration:0.2f}") + " seconds: {cl.URL(self.remote)}")
+                f"{duration:0.2f}") + f" seconds: {cl.URL(self.remote)}")
         else:
             raise IOError(f"status: {status} URL: {self.remote}")
 
     def _get_variable_info(self, variable_name: str) -> Tuple[str, str, str]:
-        """
-        Get information about a GEOS-5 FP variable.
-        
-        Args:
-            variable_name: Name or alias of the variable
-            
-        Returns:
-            Tuple of (description, product, variable)
-            
-        Raises:
-            ValueError: If variable name is invalid
-        """
         return get_variable_info(variable_name)
 
     def _is_point_geometry(self, geometry: Any) -> bool:
-        """
-        Check if a geometry is a point or multipoint.
-        
-        Args:
-            geometry: Shapely geometry object or other input
-            
-        Returns:
-            True if geometry is Point or MultiPoint, False otherwise
-        """
         return is_point_geometry(geometry)
 
     def _extract_points(self, geometry: Any) -> List[Tuple[float, float]]:
-        """
-        Extract (lon, lat) coordinates from point geometry.
-        
-        Args:
-            geometry: Point or MultiPoint geometry
-            
-        Returns:
-            List of (longitude, latitude) tuples
-            
-        Raises:
-            ValueError: If geometry is not a point type
-        """
         return extract_points(geometry)
 
     @property
     def years_available(self) -> List[date]:
         listing = self.list_remote_directory(self.remote)
         dates = sorted([date(int(item[1:]), 1, 1) for item in listing if item.startswith("Y")])
-
         return dates
 
     def year_URL(self, year: int) -> str:
@@ -190,13 +195,10 @@ class GEOS5FPConnection:
 
     def months_available_in_year(self, year) -> List[date]:
         year_URL = self.year_URL(year)
-
         if requests.head(year_URL).status_code == 404:
             raise GEOS5FPYearNotAvailable(f"GEOS-5 FP year not available: {year_URL}")
-
         listing = self.list_remote_directory(year_URL)
         dates = sorted([date(year, int(item[1:]), 1) for item in listing if item.startswith("M")])
-
         return dates
 
     def month_URL(self, year: int, month: int) -> str:
@@ -207,25 +209,19 @@ class GEOS5FPConnection:
 
     def dates_available_in_month(self, year, month) -> List[date]:
         month_URL = self.month_URL(year, month)
-
         if requests.head(month_URL).status_code == 404:
             raise GEOS5FPMonthNotAvailable(f"GEOS-5 FP month not available: {month_URL}")
-
         listing = self.list_remote_directory(month_URL)
         dates = sorted([date(year, month, int(item[1:])) for item in listing if item.startswith("D")])
-
         return dates
 
     def day_URL(self, date_UTC: Union[date, str]) -> str:
         if isinstance(date_UTC, str):
             date_UTC = parser.parse(date_UTC).date()
-
         year = date_UTC.year
         month = date_UTC.month
         day = date_UTC.day
-        URL = posixpath.join(self.remote, f"Y{year:04d}", f"M{month:02d}", f"D{day:02d}") + "/"
-
-        return URL
+        return posixpath.join(self.remote, f"Y{year:04d}", f"M{month:02d}", f"D{day:02d}") + "/"
 
     def is_day_available(self, date_UTC: Union[date, str]) -> bool:
         return requests.head(self.day_URL(date_UTC)).status_code != 404
@@ -238,27 +234,21 @@ class GEOS5FPConnection:
 
         if self.is_day_available(date_UTC):
             return date_UTC
-
         if self.is_month_available(year, month):
             return self.dates_available_in_month(year, month)[-1]
-
         if self.is_year_available(year):
             return self.dates_available_in_month(year, self.months_available_in_year(year)[-1].month)[-1]
 
         available_year = self.years_available[-1].year
         available_month = self.months_available_in_year(available_year)[-1].month
-        available_date = self.dates_available_in_month(available_year, available_month)[-1]
-
-        return available_date
+        return self.dates_available_in_month(available_year, available_month)[-1]
 
     @property
     def latest_time_available(self) -> datetime:
         retries = 3
         wait_seconds = 30
-
         while retries > 0:
             retries -= 1
-
             try:
                 return self.list_GEOS5FP_granules(self.latest_date_available).sort_values(by="time_UTC").iloc[-1].time_UTC.to_pydatetime()
             except Exception as e:
@@ -266,19 +256,15 @@ class GEOS5FPConnection:
                 sleep(wait_seconds)
                 continue
 
-
     def time_from_URL(self, URL: str) -> datetime:
         return datetime.strptime(URL.split(".")[-3], "%Y%m%d_%H%M")
 
     def list_remote_directory(self, URL: str, timeout: float = None, retries: int = None) -> List[str]:
-        """Fetch and cache the contents of a remote directory."""
         if URL in self._listings:
             return self._listings[URL]
-        else:
-            listing = HTTP_listing(URL, timeout=timeout, retries=retries)
-            self._listings[URL] = listing
-
-            return listing
+        listing = HTTP_listing(URL, timeout=timeout, retries=retries)
+        self._listings[URL] = listing
+        return listing
 
     def list_GEOS5FP_granules(
             self,
@@ -286,44 +272,27 @@ class GEOS5FPConnection:
             product_name: str = None,
             timeout: float = None,
             retries: int = None) -> pd.DataFrame:
-        """Get GEOS-5 FP granule metadata for a specific day."""
         if timeout is None:
             timeout = self.DEFAULT_TIMEOUT_SECONDS
-
         if retries is None:
             retries = self.DEFAULT_RETRIES
 
         day_URL = self.day_URL(date_UTC)
-
         if requests.head(day_URL).status_code == 404:
             raise GEOS5FPDayNotAvailable(f"GEOS-5 FP day not available: {day_URL}")
 
         logger.info(f"listing URL: {cl.URL(day_URL)}")
-        # listing = HTTP_listing(day_URL, timeout=timeout, retries=retries)
         listing = self.list_remote_directory(day_URL, timeout=timeout, retries=retries)
 
         if product_name is None:
-            URLs = sorted([
-                posixpath.join(day_URL, filename)
-                for filename
-                in listing
-                if filename.endswith(".nc4")
-            ])
+            URLs = sorted([posixpath.join(day_URL, f) for f in listing if f.endswith(".nc4")])
         else:
-            URLs = sorted([
-                posixpath.join(day_URL, filename)
-                for filename
-                in listing
-                if product_name in filename and filename.endswith(".nc4")
-            ])
+            URLs = sorted([posixpath.join(day_URL, f) for f in listing if product_name in f and f.endswith(".nc4")])
 
         df = pd.DataFrame({"URL": URLs})
-        df["time_UTC"] = df["URL"].apply(
-            lambda URL: datetime.strptime(posixpath.basename(URL).split(".")[4], "%Y%m%d_%H%M"))
-        df["product"] = df["URL"].apply(lambda URL: posixpath.basename(URL).split(".")[3])
-        df = df[["time_UTC", "product", "URL"]]
-
-        return df
+        df["time_UTC"] = df["URL"].apply(lambda u: datetime.strptime(posixpath.basename(u).split(".")[4], "%Y%m%d_%H%M"))
+        df["product"] = df["URL"].apply(lambda u: posixpath.basename(u).split(".")[3])
+        return df[["time_UTC", "product", "URL"]]
 
     def generate_filenames(
             self,
@@ -333,9 +302,6 @@ class GEOS5FPConnection:
             expected_hours: List[float] = None) -> pd.DataFrame:
         if isinstance(date_UTC, str):
             date_UTC = parser.parse(date_UTC).date()
-
-        # day_URL = self.day_URL(date_UTC)
-        # logger.info(f"generating URLs under: {cl.URL(day_URL)}")
 
         if expected_hours is None:
             if product_name.startswith("tavg3"):
@@ -348,25 +314,19 @@ class GEOS5FPConnection:
                 raise ValueError(f"unrecognized GEOS-5 FP interval: {interval}")
 
         rows = []
-
-        expected_times = [datetime.combine(date_UTC - timedelta(days=1), time(0)) + timedelta(
-            hours=float(expected_hours[-1]))] + [
-                             datetime.combine(date_UTC, time(0)) + timedelta(hours=float(hour))
-                             for hour
-                             in expected_hours
-                         ] + [datetime.combine(date_UTC + timedelta(days=1), time(0)) + timedelta(
-            hours=float(expected_hours[0]))]
+        expected_times = (
+            [datetime.combine(date_UTC - timedelta(days=1), time(0)) + timedelta(hours=float(expected_hours[-1]))]
+            + [datetime.combine(date_UTC, time(0)) + timedelta(hours=float(hour)) for hour in expected_hours]
+            + [datetime.combine(date_UTC + timedelta(days=1), time(0)) + timedelta(hours=float(expected_hours[0]))]
+        )
 
         for time_UTC in expected_times:
-            # time_UTC = datetime.combine(date_UTC, time(0)) + timedelta(hours=float(hour))
             filename = f"GEOS.fp.asm.{product_name}.{time_UTC:%Y%m%d_%H%M}.V01.nc4"
             day_URL = self.day_URL(time_UTC.date())
             URL = posixpath.join(day_URL, filename)
             rows.append([time_UTC, URL])
 
-        df = pd.DataFrame(rows, columns=["time_UTC", "URL"])
-
-        return df
+        return pd.DataFrame(rows, columns=["time_UTC", "URL"])
 
     def product_listing(
             self,
@@ -400,178 +360,144 @@ class GEOS5FPConnection:
     def download_filename(self, URL: str) -> str:
         time_UTC = self.time_from_URL(URL)
         download_directory = self.date_download_directory(time_UTC)
-        filename = join(download_directory, posixpath.basename(URL))
-
-        return filename
+        return join(download_directory, posixpath.basename(URL))
 
     def download_file(self, URL: str, filename: str = None, retries: int = 3, wait_seconds: int = 30) -> 'GEOS5FPGranule':
-        """
-        Download a GEOS-5 FP file with GEOS-5 FP specific handling and comprehensive validation.
-        
-        This method includes:
-        - Pre-download validation of existing files
-        - Automatic cleanup of invalid existing files
-        - Post-download validation with retry logic
-        - Comprehensive error reporting
-        
-        Communicates specific circumstances using exception classes.
-        """
         from .exceptions import GEOS5FPDayNotAvailable, GEOS5FPGranuleNotAvailable, FailedGEOS5FPDownload, GEOS5FPSSLError
         from .validate_GEOS5FP_NetCDF_file import validate_GEOS5FP_NetCDF_file
-
-        # GEOS-5 FP: check remote existence and generate filename if needed
-        try:
-            with create_robust_session() as session:
-                head_resp = session.head(URL, timeout=30, verify=True)
-            if head_resp.status_code != 404:
-                head_resp.raise_for_status()
-        except SSLError as e:
-            logger.error(f"SSL connection failed for URL: {URL}")
-            logger.error(f"SSL error details: {e}")
-            raise GEOS5FPSSLError(f"Failed to establish SSL connection", original_error=e, url=URL)
-        except Exception as e:
-            logger.error(f"Failed to check remote file existence: {e}")
-            raise FailedGEOS5FPDownload(f"Connection error: {e}")
-        if head_resp.status_code == 404:
-            directory_URL = posixpath.dirname(URL)
-            try:
-                with create_robust_session() as session:
-                    dir_resp = session.head(directory_URL, timeout=30, verify=True)
-                if dir_resp.status_code != 404:
-                    dir_resp.raise_for_status()
-            except SSLError as e:
-                logger.error(f"SSL connection failed for directory URL: {directory_URL}")
-                raise GEOS5FPSSLError(f"Failed to establish SSL connection to directory", original_error=e, url=directory_URL)
-            except Exception as e:
-                logger.error(f"Failed to check directory existence: {e}")
-                raise FailedGEOS5FPDownload(f"Connection error checking directory: {e}")
-            if dir_resp.status_code == 404:
-                raise GEOS5FPDayNotAvailable(directory_URL)
-            raise GEOS5FPGranuleNotAvailable(URL)
 
         if filename is None:
             filename = self.download_filename(URL)
 
-        expanded_filename = os.path.expanduser(filename)
+        expanded_filename = os.path.abspath(os.path.expanduser(filename))
 
-        # Pre-download validation: check if file already exists and is valid
-        if exists(expanded_filename):
-            logger.info(f"checking existing file: {filename}")
-            validation_result = validate_GEOS5FP_NetCDF_file(expanded_filename, verbose=False)
-            
-            if validation_result.is_valid:
-                logger.info(f"existing file is valid: {filename} ({validation_result.metadata.get('file_size_mb', 'unknown')} MB)")
-                return GEOS5FPGranule(filename)
-            else:
-                logger.warning(f"existing file is invalid, removing: {filename}")
-                for error in validation_result.errors[:3]:  # Log first 3 errors
-                    logger.warning(f"  validation error: {error}")
-                try:
-                    os.remove(expanded_filename)
-                    logger.info(f"removed invalid file: {filename}")
-                except OSError as e:
-                    logger.warning(f"failed to remove invalid file {filename}: {e}")
+        with _granule_file_lock(expanded_filename):
+            if exists(expanded_filename):
+                logger.info(f"checking existing file: {filename}")
+                validation_result = validate_GEOS5FP_NetCDF_file(expanded_filename, verbose=False)
 
-        download_root = Path(os.path.expanduser(self.download_directory)).resolve()
-        staging_root = Path(pooch.os_cache("GEOS5FP")).expanduser().resolve()
-        if staging_root.is_relative_to(download_root):
-            raise FailedGEOS5FPDownload(
-                f"Pooch staging directory must be outside the download directory: {staging_root}"
-            )
-        makedirs(staging_root, exist_ok=True)
-        makedirs(os.path.dirname(expanded_filename) or ".", exist_ok=True)
+                if validation_result.is_valid:
+                    logger.info(f"existing file is valid: {filename} ({validation_result.metadata.get('file_size_mb', 'unknown')} MB)")
+                    return GEOS5FPGranule(filename)
+                else:
+                    logger.warning(f"existing file is invalid, removing: {filename}")
+                    for error in validation_result.errors[:3]:
+                        logger.warning(f"  validation error: {error}")
+                    try:
+                        if _safe_remove(expanded_filename):
+                            logger.info(f"removed invalid file: {filename}")
+                    except OSError as e:
+                        logger.warning(f"failed to remove invalid file {filename}: {e}")
 
-        # Track download attempts with validation
-        download_attempts = 0
-        max_download_attempts = retries
-        downloader = pooch.HTTPDownloader(
-            progressbar=True,
-            chunk_size=1024 * 1024,
-            timeout=120,
-        )
-        
-        while download_attempts < max_download_attempts:
-            download_attempts += 1
-            logger.info(f"download attempt {download_attempts}/{max_download_attempts}: {URL}")
-            
             try:
-                with tempfile.TemporaryDirectory(dir=staging_root) as staging_directory:
-                    staged_filename = os.path.join(
-                        staging_directory,
-                        os.path.basename(expanded_filename),
-                    )
-                    if Path(staging_directory).resolve().is_relative_to(download_root):
-                        raise FailedGEOS5FPDownload(
-                            "Pooch staging directory must be outside the download directory"
-                        )
-                    downloader(
-                        url=URL,
-                        output_file=staged_filename,
-                        pooch=None,
-                    )
-                    if not exists(staged_filename) or os.path.getsize(staged_filename) == 0:
-                        raise IOError(f"zero-size or missing file from download: {URL}")
-                    _publish_staged_file(staged_filename, expanded_filename)
-                result_filename = filename
+                with create_robust_session() as session:
+                    head_resp = session.head(URL, timeout=30, verify=True)
+                if head_resp.status_code != 404:
+                    head_resp.raise_for_status()
             except SSLError as e:
-                logger.error(f"SSL error during download: {e}")
-                if download_attempts >= max_download_attempts:
-                    raise GEOS5FPSSLError(
-                        "Failed to establish SSL connection",
-                        original_error=e,
-                        url=URL,
-                    )
-                logger.warning(f"download attempt {download_attempts} failed: {e}")
-                logger.warning(f"waiting {wait_seconds} seconds before retry...")
-                sleep(wait_seconds)
-                continue
-            except FailedGEOS5FPDownload as e:
-                if download_attempts >= max_download_attempts:
-                    raise
-                logger.warning(f"download attempt {download_attempts} failed: {e}")
-                logger.warning(f"waiting {wait_seconds} seconds before retry...")
-                sleep(wait_seconds)
-                continue
+                logger.error(f"SSL connection failed for URL: {URL}")
+                raise GEOS5FPSSLError("Failed to establish SSL connection", original_error=e, url=URL)
             except Exception as e:
-                # Any other error during download
-                if download_attempts >= max_download_attempts:
-                    raise FailedGEOS5FPDownload(str(e))
-                logger.warning(f"download attempt {download_attempts} failed: {e}")
-                logger.warning(f"waiting {wait_seconds} seconds before retry...")
-                sleep(wait_seconds)
-                continue
+                logger.error(f"Failed to check remote file existence: {e}")
+                raise FailedGEOS5FPDownload(f"Connection error: {e}")
 
-            # Post-download validation with comprehensive checks
-            logger.info(f"validating downloaded file: {result_filename}")
-            validation_result = validate_GEOS5FP_NetCDF_file(expanded_filename, verbose=False)
-            
-            if validation_result.is_valid:
-                logger.info(f"download and validation successful: {result_filename} ({validation_result.metadata.get('file_size_mb', 'unknown')} MB)")
-                if 'product_name' in validation_result.metadata:
-                    logger.info(f"validated product: {validation_result.metadata['product_name']}")
-                return GEOS5FPGranule(result_filename)
-            else:
-                logger.warning(f"downloaded file failed validation: {result_filename}")
-                for error in validation_result.errors[:3]:  # Log first 3 errors
-                    logger.warning(f"  validation error: {error}")
-                
-                # Clean up invalid download
+            if head_resp.status_code == 404:
+                directory_URL = posixpath.dirname(URL)
                 try:
-                    os.remove(expanded_filename)
-                    logger.info(f"removed invalid downloaded file: {result_filename}")
-                except OSError as e:
-                    logger.warning(f"failed to remove invalid file {result_filename}: {e}")
-                
-                if download_attempts >= max_download_attempts:
-                    error_summary = '; '.join(validation_result.errors[:2])
-                    raise FailedGEOS5FPDownload(f"downloaded file validation failed after {max_download_attempts} attempts: {error_summary}")
-                
-                logger.warning(f"retrying download due to validation failure (attempt {download_attempts + 1}/{max_download_attempts})")
-                logger.warning(f"waiting {wait_seconds} seconds before retry...")
-                sleep(wait_seconds)
+                    with create_robust_session() as session:
+                        dir_resp = session.head(directory_URL, timeout=30, verify=True)
+                    if dir_resp.status_code != 404:
+                        dir_resp.raise_for_status()
+                except SSLError as e:
+                    raise GEOS5FPSSLError("Failed to establish SSL connection to directory", original_error=e, url=directory_URL)
+                except Exception as e:
+                    raise FailedGEOS5FPDownload(f"Connection error checking directory: {e}")
+                if dir_resp.status_code == 404:
+                    raise GEOS5FPDayNotAvailable(directory_URL)
+                raise GEOS5FPGranuleNotAvailable(URL)
 
-        # This should not be reached due to the logic above, but included for completeness
-        raise FailedGEOS5FPDownload(f"download failed after {max_download_attempts} attempts")
+            download_root = Path(os.path.expanduser(self.download_directory)).resolve()
+            staging_root = Path(pooch.os_cache("GEOS5FP")).expanduser().resolve()
+            if staging_root.is_relative_to(download_root):
+                raise FailedGEOS5FPDownload(
+                    f"Pooch staging directory must be outside the download directory: {staging_root}"
+                )
+            makedirs(staging_root, exist_ok=True)
+            makedirs(os.path.dirname(expanded_filename) or ".", exist_ok=True)
+
+            download_attempts = 0
+            max_download_attempts = retries
+            downloader = pooch.HTTPDownloader(
+                progressbar=True,
+                chunk_size=1024 * 1024,
+                timeout=120,
+            )
+
+            while download_attempts < max_download_attempts:
+                download_attempts += 1
+                logger.info(f"download attempt {download_attempts}/{max_download_attempts}: {URL}")
+
+                try:
+                    with tempfile.TemporaryDirectory(dir=staging_root) as staging_directory:
+                        staged_filename = os.path.join(
+                            staging_directory,
+                            os.path.basename(expanded_filename),
+                        )
+                        if Path(staging_directory).resolve().is_relative_to(download_root):
+                            raise FailedGEOS5FPDownload(
+                                "Pooch staging directory must be outside the download directory"
+                            )
+                        downloader(
+                            url=URL,
+                            output_file=staged_filename,
+                            pooch=None,
+                        )
+                        if not exists(staged_filename) or os.path.getsize(staged_filename) == 0:
+                            raise IOError(f"zero-size or missing file from download: {URL}")
+                        _publish_staged_file(staged_filename, expanded_filename)
+                    result_filename = filename
+                except SSLError as e:
+                    if download_attempts >= max_download_attempts:
+                        raise GEOS5FPSSLError("Failed to establish SSL connection", original_error=e, url=URL)
+                    logger.warning(f"download attempt {download_attempts} failed: {e}")
+                    sleep(wait_seconds)
+                    continue
+                except FailedGEOS5FPDownload:
+                    if download_attempts >= max_download_attempts:
+                        raise
+                    sleep(wait_seconds)
+                    continue
+                except Exception as e:
+                    if download_attempts >= max_download_attempts:
+                        raise FailedGEOS5FPDownload(str(e))
+                    logger.warning(f"download attempt {download_attempts} failed: {e}")
+                    sleep(wait_seconds)
+                    continue
+
+                logger.info(f"validating downloaded file: {result_filename}")
+                validation_result = validate_GEOS5FP_NetCDF_file(expanded_filename, verbose=False)
+
+                if validation_result.is_valid:
+                    logger.info(f"download and validation successful: {result_filename} ({validation_result.metadata.get('file_size_mb', 'unknown')} MB)")
+                    return GEOS5FPGranule(result_filename)
+                else:
+                    logger.warning(f"downloaded file failed validation: {result_filename}")
+                    for error in validation_result.errors[:3]:
+                        logger.warning(f"  validation error: {error}")
+
+                    try:
+                        if _safe_remove(expanded_filename):
+                            logger.info(f"removed invalid downloaded file: {result_filename}")
+                    except OSError as e:
+                        logger.warning(f"failed to remove invalid file {result_filename}: {e}")
+
+                    if download_attempts >= max_download_attempts:
+                        error_summary = '; '.join(validation_result.errors[:2])
+                        raise FailedGEOS5FPDownload(f"downloaded file validation failed after {max_download_attempts} attempts: {error_summary}")
+
+                    sleep(wait_seconds)
+
+            raise FailedGEOS5FPDownload(f"download failed after {max_download_attempts} attempts")
 
     def before_and_after(
             self,
@@ -585,12 +511,7 @@ class GEOS5FPConnection:
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
 
-        ## FIXME need to check local filesystem for existing files here first before searching remote
-
         search_date = time_UTC.date()
-        logger.info(f"searching GEOS-5 FP {cl.name(product)} at " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M:%S} UTC"))
-
-        logger.info(f"listing available {product} files for {search_date}...")
         product_listing = self.product_listing(
             search_date,
             product,
@@ -604,19 +525,14 @@ class GEOS5FPConnection:
         if len(product_listing) == 0:
             raise IOError(f"no {product} files found for {time_UTC}")
 
-        logger.info(f"found {len(product_listing)} {product} files, finding bracketing times...")
         before_listing = product_listing[product_listing.time_UTC < time_UTC]
-
         if len(before_listing) == 0:
             raise IOError(f"no {product} files found preceeding {time_UTC}")
 
         before_time_UTC, before_URL = before_listing.iloc[-1][["time_UTC", "URL"]]
-        logger.info(f"before time: {cl.time(f'{before_time_UTC:%Y-%m-%d %H:%M} UTC')}")
-        
         after_listing = product_listing[product_listing.time_UTC > time_UTC]
 
         if len(after_listing) == 0:
-            logger.info(f"no after files in current day, checking next day...")
             after_listing = self.product_listing(
                 search_date + timedelta(days=1),
                 product,
@@ -626,15 +542,9 @@ class GEOS5FPConnection:
                 retries=retries,
                 use_http_listing=use_http_listing
             )
-            # raise IOError(f"no {product} files found after {time_UTC}")
 
         after_time_UTC, after_URL = after_listing.iloc[0][["time_UTC", "URL"]]
-        logger.info(f"after time: {cl.time(f'{after_time_UTC:%Y-%m-%d %H:%M} UTC')}")
-        
-        logger.info(f"downloading/loading before granule...")
         before_granule = self.download_file(before_URL)
-        
-        logger.info(f"downloading/loading after granule...")
         after_granule = self.download_file(after_URL)
 
         return before_granule, after_granule
@@ -653,95 +563,18 @@ class GEOS5FPConnection:
             cmap=None,
             clip_min: Any = None,
             clip_max: Any = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        Retrieve a single predefined variable at a specific time.
-        
-        This is a convenience method for retrieving individual variables from the
-        GEOS5FP_VARIABLES registry. For more advanced queries including multiple
-        variables, time ranges, or batch queries, use the query() method instead.
-        
-        Parameters
-        ----------
-        variable_name : str
-            Name of the variable (must exist in GEOS5FP_VARIABLES)
-        time_UTC : datetime or str
-            Date/time in UTC
-        geometry : RasterGeometry or Point or MultiPoint, optional
-            Target geometry (can be raster geometry or Point/MultiPoint for time-series)
-        resampling : str, optional
-            Sampling method for resampling to target geometry
-        interval : int, optional
-            Interval for product listing
-        expected_hours : list of float, optional
-            Expected hours for product listing
-        min_value : Any, optional
-            Minimum value for interpolation
-        max_value : Any, optional
-            Maximum value for interpolation
-        exclude_values : optional
-            Values to exclude in interpolation
-        cmap : optional
-            Colormap for the result
-        clip_min : Any, optional
-            Minimum value for final clipping (applied after interpolation)
-        clip_max : Any, optional
-            Maximum value for final clipping (applied after interpolation)
-        
-        Returns
-        -------
-        Raster, np.ndarray, or DataFrame
-            Raster of the requested variable, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        
-        See Also
-        --------
-        query : More flexible query method supporting multiple variables and time ranges
-        """
-        # Handle pandas Series, DatetimeIndex, or array-like time_UTC inputs
         if isinstance(time_UTC, (pd.Series, pd.DatetimeIndex, list, tuple, np.ndarray)):
-            from time import time as current_time
-            
-            logger.info(f"Processing {len(time_UTC)} time values for variable {variable_name}")
-            
-            # Convert to pandas Series if not already
-            if not isinstance(time_UTC, pd.Series):
-                time_series = pd.Series(time_UTC)
-            else:
-                time_series = time_UTC
-            
-            # Handle geometry - can be array-like or single geometry
+            time_series = time_UTC if isinstance(time_UTC, pd.Series) else pd.Series(time_UTC)
+
             if hasattr(geometry, '__len__') and not isinstance(geometry, (str, RasterGeometry)):
-                # geometry is array-like (e.g., GeometryArray, list of Points)
                 if len(time_series) != len(geometry):
                     raise ValueError(
                         f"Length mismatch: time_UTC has {len(time_series)} values "
                         f"but geometry has {len(geometry)} elements"
                     )
-                
-                # Process each (time, geometry) pair with progress tracking
-                results = []
-                start_time = current_time()
-                total_pairs = len(time_series)
-                
-                for idx, (time_val, geom_val) in enumerate(zip(time_series, geometry)):
-                    # Calculate ETA
-                    if idx > 0:
-                        elapsed = current_time() - start_time
-                        avg_time = elapsed / idx
-                        remaining = total_pairs - idx
-                        eta_seconds = avg_time * remaining
-                        
-                        if eta_seconds < 60:
-                            eta_str = f"{eta_seconds:.0f}s"
-                        elif eta_seconds < 3600:
-                            eta_str = f"{eta_seconds/60:.1f}m"
-                        else:
-                            eta_str = f"{eta_seconds/3600:.1f}h"
-                        
-                        logger.info(f"Processing pair {idx+1}/{total_pairs} [{100*idx/total_pairs:.1f}%]: time={time_val}, geometry={geom_val} (ETA: {eta_str})")
-                    else:
-                        logger.info(f"Processing pair {idx+1}/{total_pairs}: time={time_val}, geometry={geom_val}")
-                    
-                    result = self.variable(
+
+                results = [
+                    self.variable(
                         variable_name=variable_name,
                         time_UTC=time_val,
                         geometry=geom_val,
@@ -755,50 +588,18 @@ class GEOS5FPConnection:
                         clip_min=clip_min,
                         clip_max=clip_max
                     )
-                    results.append(result)
-                
-                logger.info(f"Completed processing {total_pairs} pairs in {current_time() - start_time:.1f}s")
-                
-                # Combine results
+                    for time_val, geom_val in zip(time_series, geometry)
+                ]
+
                 if all(isinstance(r, pd.DataFrame) for r in results):
-                    # Concatenate DataFrames
-                    combined = pd.concat(results, ignore_index=True)
-                    return combined
+                    return pd.concat(results, ignore_index=True)
                 elif all(isinstance(r, (Raster, np.ndarray)) for r in results):
-                    # Stack rasters
                     return np.array(results)
-                else:
-                    # Mixed types - return as list
-                    return results
+                return results
             else:
-                # Single geometry for all times - process each unique time with progress tracking
                 unique_times = time_series.unique()
-                time_to_result = {}
-                start_time = current_time()
-                total_unique = len(unique_times)
-                
-                logger.info(f"Processing {total_unique} unique timestamps out of {len(time_series)} total values")
-                
-                for idx, unique_time in enumerate(unique_times):
-                    # Calculate ETA
-                    if idx > 0:
-                        elapsed = current_time() - start_time
-                        avg_time = elapsed / idx
-                        remaining = total_unique - idx
-                        eta_seconds = avg_time * remaining
-                        
-                        if eta_seconds < 60:
-                            eta_str = f"{eta_seconds:.0f}s"
-                        elif eta_seconds < 3600:
-                            eta_str = f"{eta_seconds/60:.1f}m"
-                        else:
-                            eta_str = f"{eta_seconds/3600:.1f}h"
-                        
-                        logger.info(f"Processing timestamp {idx+1}/{total_unique} [{100*idx/total_unique:.1f}%]: {unique_time} (ETA: {eta_str})")
-                    else:
-                        logger.info(f"Processing timestamp {idx+1}/{total_unique}: {unique_time}")
-                    
-                    result = self.variable(
+                time_to_result = {
+                    unique_time: self.variable(
                         variable_name=variable_name,
                         time_UTC=unique_time,
                         geometry=geometry,
@@ -812,65 +613,33 @@ class GEOS5FPConnection:
                         clip_min=clip_min,
                         clip_max=clip_max
                     )
-                    time_to_result[unique_time] = result
-                
-                logger.info(f"Completed processing {total_unique} unique timestamps in {current_time() - start_time:.1f}s")
-                
-                # Map results back to original time series
-                logger.info(f"Mapping results to original {len(time_series)} time series entries")
+                    for unique_time in unique_times
+                }
                 results = [time_to_result[t] for t in time_series]
-                
-                # Combine results
                 if all(isinstance(r, pd.DataFrame) for r in results):
-                    combined = pd.concat(results, ignore_index=True)
-                    return combined
+                    return pd.concat(results, ignore_index=True)
                 elif all(isinstance(r, (Raster, np.ndarray)) for r in results):
                     return np.array(results)
-                else:
-                    return results
-        
+                return results
+
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-            
+
         NAME, PRODUCT, VARIABLE = get_variable_info(variable_name)
-        
-        # Check if this is a point query
+
         if is_point_geometry(geometry):
-            # Skip OPeNDAP if disabled or not available
-            if not self.use_opendap:
-                logger.info(f"OPeNDAP disabled, using standard interpolation for point query")
-            elif not HAS_OPENDAP_SUPPORT:
-                logger.warning(
-                    "Point query requires xarray and netCDF4. "
-                    "Install with: conda install -c conda-forge xarray netcdf4. "
-                    "Falling back to standard interpolation."
-                )
-            else:
-                # Try OPeNDAP point query
+            if self.use_opendap and HAS_OPENDAP_SUPPORT:
                 try:
                     return self._query_point_via_opendap(
-                        NAME, PRODUCT, VARIABLE, variable_name, 
-                        time_UTC, geometry, resampling, interval, 
-                        expected_hours, min_value, max_value, 
+                        NAME, PRODUCT, VARIABLE, variable_name,
+                        time_UTC, geometry, resampling, interval,
+                        expected_hours, min_value, max_value,
                         exclude_values, cmap, clip_min, clip_max
                     )
                 except Exception as e:
-                    if self.allow_fallback:
-                        logger.warning(f"OPeNDAP point query failed: {e}")
-                        logger.info("Falling back to standard interpolation method")
-                    else:
-                        logger.error(f"OPeNDAP point query failed: {e}")
-                        logger.error("Fallback to file download is disabled. Set allow_fallback=True to enable.")
+                    if not self.allow_fallback:
                         raise
-            
-            # Fallback to standard interpolation for point queries (only if allow_fallback=True)
-            logger.info(
-                f"retrieving {cl.name(NAME)} "
-                f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-                "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC") +
-                " using interpolation method"
-            )
-            
+
             result = self.interpolate(
                 time_UTC=time_UTC,
                 product=PRODUCT,
@@ -884,19 +653,10 @@ class GEOS5FPConnection:
                 exclude_values=exclude_values,
                 cmap=cmap
             )
-            
             if clip_min is not None or clip_max is not None:
                 result = rt.clip(result, clip_min, clip_max)
-                
             return result
-        
-        # Regular raster query
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
-        )
-        
+
         result = self.interpolate(
             time_UTC=time_UTC,
             product=PRODUCT,
@@ -910,10 +670,10 @@ class GEOS5FPConnection:
             exclude_values=exclude_values,
             cmap=cmap
         )
-        
+
         if clip_min is not None or clip_max is not None:
             result = rt.clip(result, clip_min, clip_max)
-            
+
         return result
 
     def _query_point_via_opendap(
@@ -933,35 +693,22 @@ class GEOS5FPConnection:
             cmap: Any,
             clip_min: Any,
             clip_max: Any) -> pd.DataFrame:
-        """Query point(s) via OPeNDAP with fallback to interpolation."""
         if not HAS_OPENDAP_SUPPORT:
             raise ImportError(
                 "Point query support requires xarray and netCDF4. "
                 "Install with: conda install -c conda-forge xarray netcdf4"
             )
-        
-        logger.info(
-            f"retrieving {cl.name(NAME)} time-series "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "at point location(s)"
-        )
-        
+
         points = extract_points(geometry)
         dfs = []
-        
-        # OPeNDAP uses lowercase variable names
         variable_opendap = VARIABLE.lower()
-        
-        # Track failed points for fallback
         failed_points = []
-        
+
         for lat, lon in points:
             try:
-                # For single time point, query a small window around the time
-                # to ensure we get the nearest available timestep
                 time_window_start = time_UTC - timedelta(hours=2)
                 time_window_end = time_UTC + timedelta(hours=2)
-                
+
                 result = query_geos5fp_point(
                     dataset=PRODUCT,
                     variable=variable_opendap,
@@ -972,17 +719,15 @@ class GEOS5FPConnection:
                     retries=5,
                     retry_delay=15.0
                 )
-                
+
                 if len(result.df) == 0:
-                    logger.warning(f"No data found for point ({lat}, {lon}) near {time_UTC}")
                     failed_points.append((lat, lon))
                     continue
-                
-                # Find the closest time to our target
+
                 time_diffs = abs(result.df.index - time_UTC)
                 closest_idx = time_diffs.argmin()
                 df_point = result.df.iloc[[closest_idx]].copy()
-                
+
                 df_point['lat'] = lat
                 df_point['lon'] = lon
                 df_point['lat_used'] = result.lat_used
@@ -991,41 +736,23 @@ class GEOS5FPConnection:
             except Exception as e:
                 logger.warning(f"Failed to query point ({lat}, {lon}) via OPeNDAP: {e}")
                 failed_points.append((lat, lon))
-        
-        # Report failed points but don't fall back to file downloads
-        if failed_points and len(dfs) == 0:
-            raise ValueError(
-                f"OPeNDAP queries failed for all {len(points)} points. "
-                f"No data retrieved. Set allow_fallback=True to enable fallback to file download."
-            )
-        elif failed_points:
-            logger.warning(
-                f"OPeNDAP queries failed for {len(failed_points)} out of {len(points)} points. "
-                f"Returning data for {len(dfs)} successful points only. "
-                f"Set allow_fallback=True to retry failed points via file download."
-            )
-        
+
         if not dfs:
             raise ValueError(f"No successful point queries for any of {len(points)} points")
-        
+
         result_df = pd.concat(dfs, ignore_index=False)
-        # Rename from OPeNDAP variable name to our standard variable name
         result_df = result_df.rename(columns={variable_opendap: variable_name})
-        
-        # Apply transformation if defined for this variable
+
         if variable_name in VARIABLE_TRANSFORMATIONS:
             result_df[variable_name] = result_df[variable_name].apply(VARIABLE_TRANSFORMATIONS[variable_name])
-        
-        # Apply clipping if specified
+
         if clip_min is not None or clip_max is not None:
             result_df[variable_name] = result_df[variable_name].clip(lower=clip_min, upper=clip_max)
-        
-        # Ensure geometry column is at the end if present
+
         if 'geometry' in result_df.columns:
-            cols = [c for c in result_df.columns if c != 'geometry']
-            cols.append('geometry')
+            cols = [c for c in result_df.columns if c != 'geometry'] + ['geometry']
             result_df = result_df[cols]
-        
+
         return result_df
 
     def interpolate(
@@ -1038,7 +765,7 @@ class GEOS5FPConnection:
             cmap=None,
             min_value: Any = None,
             max_value: Any = None,
-            exclude_values = None,
+            exclude_values=None,
             interval: int = None,
             expected_hours: List[float] = None,
             timeout: float = None,
@@ -1053,12 +780,6 @@ class GEOS5FPConnection:
                 interval = 3
             elif product.startswith(("tavg1", "inst1")):
                 interval = 1
-            elif product == "tavg1_2d_rad_Nx":
-                interval = 1
-            elif product == "tavg1_2d_slv_Nx":
-                interval = 1
-            elif product == "inst3_2d_asm_Nx":
-                interval = 3
 
         if interval is None and expected_hours is None:
             raise ValueError(f"interval or expected hours not given for {product}")
@@ -1073,50 +794,29 @@ class GEOS5FPConnection:
             use_http_listing=use_http_listing
         )
 
-        logger.info(
-            f"interpolating GEOS-5 FP {cl.name(product)} {cl.name(variable)} " +
-            f"from " + cl.time(f"{before_granule.time_UTC:%Y-%m-%d %H:%M} UTC ") +
-            f"and " + cl.time(f"{after_granule.time_UTC:%Y-%m-%d %H:%M} UTC") + " to " + cl.time(
-                f"{time_UTC:%Y-%m-%d %H:%M} UTC")
+        before = before_granule.read(
+            variable,
+            geometry=geometry,
+            resampling=resampling,
+            min_value=min_value,
+            max_value=max_value,
+            exclude_values=exclude_values
+        )
+        after = after_granule.read(
+            variable,
+            geometry=geometry,
+            resampling=resampling,
+            min_value=min_value,
+            max_value=max_value,
+            exclude_values=exclude_values
         )
 
-        with Timer() as timer:
-            logger.info(f"reading before granule: {cl.file(before_granule.filename)}")
-            t_before = Timer()
-            before = before_granule.read(
-                variable,
-                geometry=geometry,
-                resampling=resampling,
-                min_value=min_value,
-                max_value=max_value,
-                exclude_values=exclude_values
-            )
-            logger.info(f"before granule read complete ({t_before.duration:.2f} seconds)")
+        time_fraction = (time_UTC - before_granule.time_UTC) / (after_granule.time_UTC - before_granule.time_UTC)
+        interpolated_data = before + (after - before) * time_fraction
 
-            logger.info(f"reading after granule: {cl.file(after_granule.filename)}")
-            t_after = Timer()
-            after = after_granule.read(
-                variable,
-                geometry=geometry,
-                resampling=resampling,
-                min_value=min_value,
-                max_value=max_value,
-                exclude_values=exclude_values
-            )
-            logger.info(f"after granule read complete ({t_after.duration:.2f} seconds)")
-
-            logger.info(f"computing temporal interpolation...")
-            time_fraction = (time_UTC - before_granule.time_UTC) / (after_granule.time_UTC - before_granule.time_UTC)
-            source_diff = after - before
-            interpolated_data = before + source_diff * time_fraction
-            logger.info(f"GEOS-5 FP interpolation complete ({timer.duration:.2f} seconds total)")
-
-
-        before_filename = before_granule.filename
-        after_filename = after_granule.filename
-        filenames = [before_filename, after_filename]
+        filenames = [before_granule.filename, after_granule.filename]
         self.filenames = set(self.filenames) | set(filenames)
-        
+
         if isinstance(interpolated_data, Raster):
             interpolated_data["filenames"] = filenames
 
@@ -1125,15 +825,7 @@ class GEOS5FPConnection:
 
         return interpolated_data
 
-
     def SFMC(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        top soil layer moisture content cubic meters per cubic meters
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry (raster geometry or Point/MultiPoint for time-series)
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of soil moisture, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
         return self.query(
             target_variables="SFMC",
             time_UTC=time_UTC,
@@ -1149,13 +841,6 @@ class GEOS5FPConnection:
     SM = SFMC
 
     def LAI(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        leaf area index
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of LAI, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
         return self.query(
             target_variables="LAI",
             time_UTC=time_UTC,
@@ -1168,28 +853,12 @@ class GEOS5FPConnection:
         )
 
     def NDVI(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
-        """
-        normalized difference vegetation index
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of NDVI or DataFrame for point queries
-        """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
         LAI = self.LAI(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-        NDVI = rt.clip(1.05 - np.exp(-0.5 * LAI), 0, 1)
-
-        return NDVI
+        return rt.clip(1.05 - np.exp(-0.5 * LAI), 0, 1)
 
     def LHLAND(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        latent heat flux in watts per square meter
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of latent heat flux, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
         return self.query(
             target_variables="LHLAND",
             time_UTC=time_UTC,
@@ -1200,13 +869,6 @@ class GEOS5FPConnection:
         )
 
     def EFLUX(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        latent heat flux in watts per square meter
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of latent heat flux, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
         return self.query(
             target_variables="EFLUX",
             time_UTC=time_UTC,
@@ -1216,13 +878,6 @@ class GEOS5FPConnection:
         )
 
     def PARDR(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        Surface downward PAR beam flux in watts per square meter
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of PAR beam flux, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
         return self.query(
             target_variables="PARDR",
             time_UTC=time_UTC,
@@ -1232,13 +887,6 @@ class GEOS5FPConnection:
         )
 
     def PARDF(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        Surface downward PAR diffuse flux in watts per square meter
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of PAR diffuse flux, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
         return self.query(
             target_variables="PARDF",
             time_UTC=time_UTC,
@@ -1248,16 +896,7 @@ class GEOS5FPConnection:
         )
 
     def AOT(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        aerosol optical thickness (AOT) extinction coefficient
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of AOT, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        # 1:30, 4:30, 7:30, 10:30, 13:30, 16:30, 19:30, 22:30 UTC
         EXPECTED_HOURS = [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
-        
         return self.query(
             target_variables="AOT",
             time_UTC=time_UTC,
@@ -1267,13 +906,6 @@ class GEOS5FPConnection:
         )
 
     def COT(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        cloud optical thickness (COT) extinction coefficient
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of COT, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
         return self.query(
             target_variables="COT",
             time_UTC=time_UTC,
@@ -1281,18 +913,7 @@ class GEOS5FPConnection:
             resampling=resampling
         )
 
-    def Ts_K(
-            self,
-            time_UTC: Union[datetime, str],
-            geometry: RasterGeometry = None,
-            resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        surface temperature (Ts) in Kelvin
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of Ts, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
+    def Ts_K(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         return self.query(
             target_variables="Ts_K",
             time_UTC=time_UTC,
@@ -1314,17 +935,9 @@ class GEOS5FPConnection:
             apply_scale: bool = True,
             apply_bias: bool = True,
             return_scale_and_bias: bool = False) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        near-surface air temperature (Ta) in Kelvin
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry (raster or Point/MultiPoint)
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of Ta, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
-        
-        # If point geometry and no downscaling requested, use simple variable retrieval
+
         if is_point_geometry(geometry) and ST_K is None:
             return self.query(
                 target_variables="Ta_K",
@@ -1332,14 +945,8 @@ class GEOS5FPConnection:
                 geometry=geometry,
                 resampling=resampling
             )
-        
-        NAME, PRODUCT, VARIABLE = get_variable_info("Ta_K")
 
-        logger.info(
-            f"retrieving {cl.name(NAME)} "
-            f"from GEOS-5 FP {cl.name(PRODUCT)} {cl.name(VARIABLE)} " +
-            "for " + cl.time(f"{time_UTC:%Y-%m-%d %H:%M} UTC")
-        )
+        NAME, PRODUCT, VARIABLE = get_variable_info("Ta_K")
 
         if coarse_cell_size_meters is None:
             coarse_cell_size_meters = DEFAULT_COARSE_CELL_SIZE_METERS
@@ -1349,21 +956,16 @@ class GEOS5FPConnection:
         else:
             if geometry is None:
                 geometry = ST_K.geometry
-
             if coarse_geometry is None:
                 coarse_geometry = geometry.rescale(coarse_cell_size_meters)
 
             Ta_K_coarse = self.interpolate(time_UTC, PRODUCT, VARIABLE, geometry=coarse_geometry, resampling=resampling)
             filenames = Ta_K_coarse["filenames"]
-
             ST_K_water = None
 
             if water is not None:
                 ST_K_water = rt.where(water, ST_K, np.nan)
                 ST_K = rt.where(water, np.nan, ST_K)
-
-            scale = None
-            bias = None
 
             Ta_K = linear_downscale(
                 coarse_image=Ta_K_coarse,
@@ -1385,21 +987,12 @@ class GEOS5FPConnection:
                     apply_bias=apply_bias,
                     return_scale_and_bias=False
                 )
-
                 Ta_K = rt.where(water, Ta_K_water, Ta_K)
 
             Ta_K.filenames = filenames
-
             return Ta_K
 
     def Tmin_K(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        minimum near-surface air temperature (Ta) in Kelvin
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of Ta, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
         return self.query(
             target_variables="Tmin_K",
             time_UTC=time_UTC,
@@ -1409,9 +1002,7 @@ class GEOS5FPConnection:
 
     def SVP_Pa(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         Ta_C = self.Ta_C(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-        SVP_Pa = 0.6108 * np.exp((17.27 * Ta_C) / (Ta_C + 237.3)) * 1000  # [Pa]
-
-        return SVP_Pa
+        return 0.6108 * np.exp((17.27 * Ta_C) / (Ta_C + 237.3)) * 1000
 
     def SVP_kPa(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         return self.SVP_Pa(time_UTC=time_UTC, geometry=geometry, resampling=resampling) / 1000
@@ -1423,756 +1014,91 @@ class GEOS5FPConnection:
         return self.Tmin_K(time_UTC=time_UTC, geometry=geometry, resampling=resampling) - 273.15
 
     def PS(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        surface pressure in Pascal
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of surface pressure, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        return self.query(
-            target_variables="PS",
-            time_UTC=time_UTC,
-            geometry=geometry,
-            resampling=resampling
-        )
+        return self.query(target_variables="PS", time_UTC=time_UTC, geometry=geometry, resampling=resampling)
 
     def Q(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        near-surface specific humidity (Q) in kilograms per kilogram
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of Q, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        return self.query(
-            target_variables="Q",
-            time_UTC=time_UTC,
-            geometry=geometry,
-            resampling=resampling
-        )
+        return self.query(target_variables="Q", time_UTC=time_UTC, geometry=geometry, resampling=resampling)
 
     def Ea_Pa(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         RH = self.RH(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         SVP_Pa = self.SVP_Pa(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-        Ea_Pa = RH * SVP_Pa
-
-        return Ea_Pa
+        return RH * SVP_Pa
 
     def Td_K(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         Ta_K = self.Ta_K(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         RH = self.RH(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-        Td_K = Ta_K - (100 - (RH * 100)) / 5
+        return Ta_K - (100.0 - RH * 100.0) / 5.0
 
-        return Td_K
-
-    def Td_C(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
-        return self.Td_K(time_UTC=time_UTC, geometry=geometry, resampling=resampling) - 273.15
-
-    def Cp(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
-        Ps_Pa = self.PS(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-        Ea_Pa = self.Ea_Pa(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-        Cp = 0.24 * 4185.5 * (1.0 + 0.8 * (0.622 * Ea_Pa / (Ps_Pa - Ea_Pa)))  # [J kg-1 K-1]
-
-        return Cp
-
-    def VPD_Pa(
-            self,
-            time_UTC: Union[datetime, str],
-            ST_K: Raster = None,
-            geometry: RasterGeometry = None,
-            coarse_geometry: RasterGeometry = None,
-            coarse_cell_size_meters: int = DEFAULT_COARSE_CELL_SIZE_METERS,
-            resampling: str = None,
-            upsampling: str = None,
-            downsampling: str = None,
-            return_scale_and_bias: bool = False) -> Raster:
-        if ST_K is None:
-            Ea_Pa = self.Ea_Pa(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-            SVP_Pa = self.SVP_Pa(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-            VPD_Pa = rt.clip(SVP_Pa - Ea_Pa, 0, None)
-
-            return VPD_Pa
-        else:
-            if geometry is None:
-                geometry = ST_K.geometry
-
-            if coarse_geometry is None:
-                coarse_geometry = geometry.rescale(coarse_cell_size_meters)
-
-            Ea_Pa = self.Ea_Pa(time_UTC=time_UTC, geometry=coarse_geometry, resampling=resampling)
-            SVP_Pa = self.SVP_Pa(time_UTC=time_UTC, geometry=coarse_geometry, resampling=resampling)
-            VPD_Pa = rt.clip(SVP_Pa - Ea_Pa, 0, None)
-
-            return linear_downscale(
-                coarse_image=VPD_Pa,
-                fine_image=ST_K,
-                upsampling=upsampling,
-                downsampling=downsampling,
-                return_scale_and_bias=return_scale_and_bias
-            )
-
-    def VPD_kPa(
-            self,
-            time_UTC: Union[datetime, str],
-            ST_K: Raster = None,
-            geometry: RasterGeometry = None,
-            coarse_geometry: RasterGeometry = None,
-            coarse_cell_size_meters: int = DEFAULT_COARSE_CELL_SIZE_METERS,
-            resampling: str = None,
-            upsampling: str = None,
-            downsampling: str = None) -> Raster:
-        VPD_Pa = self.VPD_Pa(
-            time_UTC=time_UTC,
-            ST_K=ST_K,
-            geometry=geometry,
-            coarse_geometry=coarse_geometry,
-            coarse_cell_size_meters=coarse_cell_size_meters,
-            resampling=resampling,
-            upsampling=upsampling,
-            downsampling=downsampling
-        )
-
-        VPD_kPa = VPD_Pa / 1000
-
-        return VPD_kPa
-
-    def RH(
-            self,
-            time_UTC: Union[datetime, str],
-            geometry: RasterGeometry = None,
-            SM: Raster = None,
-            ST_K: Raster = None,
-            VPD_kPa: Raster = None,
-            water: Raster = None,
-            coarse_geometry: RasterGeometry = None,
-            coarse_cell_size_meters: int = DEFAULT_COARSE_CELL_SIZE_METERS,
-            resampling: str = None,
-            upsampling: str = None,
-            downsampling: str = None,
-            sharpen_VPD: bool = True,
-            return_bias: bool = False) -> Raster:
-        if upsampling is None:
-            upsampling = DEFAULT_UPSAMPLING
-
-        if downsampling is None:
-            downsampling = DEFAULT_DOWNSAMPLING
-
-        bias_fine = None
-
-        if SM is None:
-            Q = self.Q(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-            Ps_Pa = self.PS(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-            SVP_Pa = self.SVP_Pa(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-            Mw = 18.015268  # g / mol
-            Md = 28.96546e-3  # kg / mol
-            epsilon = Mw / (Md * 1000)
-            w = Q / (1 - Q)
-            ws = epsilon * SVP_Pa / (Ps_Pa - SVP_Pa)
-            RH = rt.clip(w / ws, 0, 1)
-        else:
-            if geometry is None:
-                geometry = SM.geometry
-
-            if coarse_geometry is None:
-                coarse_geometry = geometry.rescale(coarse_cell_size_meters)
-
-            RH_coarse = self.RH(time_UTC=time_UTC, geometry=coarse_geometry, resampling=resampling)
-
-            if VPD_kPa is None:
-                if sharpen_VPD:
-                    VPD_fine_distribution = ST_K
-                else:
-                    VPD_fine_distribution = None
-
-                VPD_kPa = self.VPD_kPa(
-                    time_UTC=time_UTC,
-                    ST_K=VPD_fine_distribution,
-                    geometry=geometry,
-                    coarse_geometry=coarse_geometry,
-                    coarse_cell_size_meters=coarse_cell_size_meters,
-                    resampling=resampling,
-                    upsampling=upsampling,
-                    downsampling=downsampling
-                )
-
-            RH_estimate_fine = SM ** (1 / VPD_kPa)
-
-            if return_bias:
-                RH, bias_fine = bias_correct(
-                    coarse_image=RH_coarse,
-                    fine_image=RH_estimate_fine,
-                    upsampling=upsampling,
-                    downsampling=downsampling,
-                    return_bias=True
-                )
-            else:
-                RH = bias_correct(
-                    coarse_image=RH_coarse,
-                    fine_image=RH_estimate_fine,
-                    upsampling=upsampling,
-                    downsampling=downsampling,
-                    return_bias=False
-                )
-
-            if water is not None:
-                if ST_K is not None:
-                    ST_K_water = rt.where(water, ST_K, np.nan)
-                    RH_coarse_complement = 1 - RH_coarse
-                    RH_complement_water = linear_downscale(
-                        coarse_image=RH_coarse_complement,
-                        fine_image=ST_K_water,
-                        upsampling=upsampling,
-                        downsampling=downsampling,
-                        apply_bias=True,
-                        return_scale_and_bias=False
-                    )
-
-                    RH_water = 1 - RH_complement_water
-                    RH = rt.where(water, RH_water, RH)
-                else:
-                    RH_smooth = self.RH(time_UTC=time_UTC, geometry=geometry, resampling="lanczos")
-                    RH = rt.where(water, RH_smooth, RH)
-
-        RH = rt.clip(RH, 0, 1)
-
-        if return_bias:
-            return RH, bias_fine
-        else:
-            return RH
-
-    def Ea_kPa(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
-        return self.Ea_Pa(time_UTC=time_UTC, geometry=geometry, resampling=resampling) / 1000
+    def RH(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+        Q = self.Q(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
+        PS = self.PS(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
+        Ta_K = self.Ta_K(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
+        Ta_C = Ta_K - 273.15
+        SVP_Pa = 611.2 * np.exp((17.67 * Ta_C) / (Ta_C + 243.5))
+        Mw = 18.015268
+        Md = 28.96546e-3
+        epsilon = Mw / (Md * 1000)
+        w = Q / (1 - Q)
+        ws = epsilon * SVP_Pa / (PS - SVP_Pa)
+        return rt.clip(w / ws, 0, 1)
 
     def vapor_kgsqm(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        total column water vapor (vapor_gccm) in kilograms per square meter
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of vapor_gccm, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        return self.query(
-            target_variables="vapor_kgsqm",
-            time_UTC=time_UTC,
-            geometry=geometry,
-            resampling=resampling,
-            clip_min=0
-        )
+        return self.query(target_variables="vapor_kgsqm", time_UTC=time_UTC, geometry=geometry, resampling=resampling)
 
-    def vapor_gccm(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray]:
-        """
-        total column water vapor (vapor_gccm) in grams per square centimeter
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of vapor_gccm, numpy array for point queries, or DataFrame for multi-variable queries
-        """
-        return self.vapor_kgsqm(time_UTC=time_UTC, geometry=geometry, resampling=resampling) / 10
+    def vapor_gccm(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
+        return self.query(target_variables="vapor_gccm", time_UTC=time_UTC, geometry=geometry, resampling=resampling)
 
     def ozone_dobson(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        total column ozone (ozone_cm) in Dobson units
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of ozone, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        return self.query(
-            target_variables="ozone_dobson",
-            time_UTC=time_UTC,
-            geometry=geometry,
-            resampling=resampling,
-            clip_min=0
-        )
+        return self.query(target_variables="ozone_dobson", time_UTC=time_UTC, geometry=geometry, resampling=resampling)
 
-    def ozone_cm(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray]:
-        """
-        total column ozone (ozone_cm) in centimeters
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of ozone_cm, numpy array for point queries, or DataFrame for multi-variable queries
-        """
-        return self.ozone_dobson(time_UTC=time_UTC, geometry=geometry, resampling=resampling) / 1000
+    def ozone_cm(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
+        return self.query(target_variables="ozone_cm", time_UTC=time_UTC, geometry=geometry, resampling=resampling)
 
     def U2M(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        eastward wind at 2 meters in meters per second
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of U2M, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        return self.query(
-            target_variables="U2M",
-            time_UTC=time_UTC,
-            geometry=geometry,
-            resampling=resampling
-        )
+        return self.query(target_variables="U2M", time_UTC=time_UTC, geometry=geometry, resampling=resampling)
 
     def V2M(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        northward wind at 2 meters in meters per second
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of V2M, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        return self.query(
-            target_variables="V2M",
-            time_UTC=time_UTC,
-            geometry=geometry,
-            resampling=resampling
-        )
+        return self.query(target_variables="V2M", time_UTC=time_UTC, geometry=geometry, resampling=resampling)
+
+    def wind_speed_mps(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+        U2M = self.U2M(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
+        V2M = self.V2M(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
+        return np.sqrt(U2M ** 2 + V2M ** 2)
 
     def CO2SC(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        carbon dioxide suface concentration in ppm or micromol per mol
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of CO2SC, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        # 1:30, 4:30, 7:30, 10:30, 13:30, 16:30, 19:30, 22:30 UTC
-        EXPECTED_HOURS = [1.5, 4.5, 7.5, 10.5, 13.5, 16.5, 19.5, 22.5]
-        
-        return self.query(
-            target_variables="CO2SC",
-            time_UTC=time_UTC,
-            geometry=geometry,
-            resampling=resampling,
-            expected_hours=EXPECTED_HOURS
-        )
+        return self.query(target_variables="CO2SC", time_UTC=time_UTC, geometry=geometry, resampling=resampling)
 
-    def Ca(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        Atmospheric CO2 concentration in ppm (parts per million by volume)
-        Alias for CO2SC.
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of CO2 concentration, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        result = self.CO2SC(time_UTC, geometry=geometry, resampling=resampling)
-        
-        # Rename CO2SC column to Ca if this is a DataFrame
-        if isinstance(result, pd.DataFrame) and 'CO2SC' in result.columns:
-            result = result.rename(columns={'CO2SC': 'Ca'})
-        # For Raster objects, rename the variable
-        elif hasattr(result, 'rename'):
-            result = result.rename('Ca')
-        
-        return result
-
-    def wind_speed(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
-        """
-        wind speed in meters per second
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of vapor_gccm or DataFrame for point queries
-        """
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-        U = self.U2M(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-        V = self.V2M(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-        wind_speed = rt.clip(np.sqrt(U ** 2.0 + V ** 2.0), 0.0, None)
-
-        return wind_speed
+    Ca = CO2SC
 
     def SWin(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        incoming shortwave radiation (SWin) in watts per square meter
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of SWin, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        return self.query(
-            target_variables="SWin",
-            time_UTC=time_UTC,
-            geometry=geometry,
-            resampling=resampling,
-            clip_min=0
-        )
+        return self.query(target_variables="SWin", time_UTC=time_UTC, geometry=geometry, resampling=resampling)
 
     def SWTDN(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        top of atmosphere incoming shortwave radiation (SWin) in watts per square meter
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of SWTDN, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        return self.query(
-            target_variables="SWTDN",
-            time_UTC=time_UTC,
-            geometry=geometry,
-            resampling=resampling,
-            clip_min=0
-        )
+        return self.query(target_variables="SWTDN", time_UTC=time_UTC, geometry=geometry, resampling=resampling)
 
     def ALBVISDR(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        Direct beam VIS-UV surface albedo
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of direct visible albedo, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        return self.query(
-            target_variables="ALBVISDR",
-            time_UTC=time_UTC,
-            geometry=geometry,
-            resampling=resampling,
-            clip_min=0,
-            clip_max=1
-        )
+        return self.query(target_variables="ALBVISDR", time_UTC=time_UTC, geometry=geometry, resampling=resampling)
 
     def ALBVISDF(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        Diffuse beam VIS-UV surface albedo
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of diffuse visible albedo, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        return self.query(
-            target_variables="ALBVISDF",
-            time_UTC=time_UTC,
-            geometry=geometry,
-            resampling=resampling,
-            clip_min=0,
-            clip_max=1
-        )
+        return self.query(target_variables="ALBVISDF", time_UTC=time_UTC, geometry=geometry, resampling=resampling)
 
     def ALBNIRDF(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        Diffuse beam NIR surface albedo
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of diffuse NIR albedo, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        return self.query(
-            target_variables="ALBNIRDF",
-            time_UTC=time_UTC,
-            geometry=geometry,
-            resampling=resampling,
-            clip_min=0,
-            clip_max=1
-        )
+        return self.query(target_variables="ALBNIRDF", time_UTC=time_UTC, geometry=geometry, resampling=resampling)
 
     def ALBNIRDR(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        Direct beam NIR surface albedo
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of direct NIR albedo, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        return self.query(
-            target_variables="ALBNIRDR",
-            time_UTC=time_UTC,
-            geometry=geometry,
-            resampling=resampling,
-            clip_min=0,
-            clip_max=1
-        )
+        return self.query(target_variables="ALBNIRDR", time_UTC=time_UTC, geometry=geometry, resampling=resampling)
 
     def ALBEDO(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
+        return self.query(target_variables="ALBEDO", time_UTC=time_UTC, geometry=geometry, resampling=resampling)
+
+    def albedo_visible(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
-        Surface albedo
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of surface albedo, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
+        visible surface albedo (ALBEDO * (ALBVISDR / ALBEDO) = ALBVISDR)
         """
-        return self.query(
-            target_variables="ALBEDO",
-            time_UTC=time_UTC,
-            geometry=geometry,
-            resampling=resampling,
-            clip_min=0,
-            clip_max=1
-        )
-    
-    def PAR_proportion(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
+        return self.ALBVISDR(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
+
+    def albedo_NIR(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         """
-        PAR albedo fraction - the proportion of total albedo from the direct PAR beam component
-        Formula: PAR_proportion = ALBVISDR / ALBEDO
-        Values range from 0 to 1, indicating what fraction of reflected radiation is in the PAR band
-        Use this as a scaling factor to convert total albedo to PAR albedo: albedo_PAR = albedo * PAR_proportion
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of PAR albedo fraction, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
+        near-infrared surface albedo (ALBEDO * (ALBNIRDR / ALBEDO) = ALBNIRDR)
         """
-        albedo_NWP = self.ALBEDO(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-        RVIS_NWP = self.ALBVISDR(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-        PAR_proportion = rt.clip(RVIS_NWP / albedo_NWP, 0, 1)
-        return PAR_proportion
-    
-    def NIR_proportion(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        NIR albedo fraction - the proportion of total albedo from the direct NIR beam component
-        Formula: NIR_proportion = ALBNIRDR / ALBEDO
-        Values range from 0 to 1, indicating what fraction of reflected radiation is in the NIR band
-        Use this as a scaling factor to convert total albedo to NIR albedo: albedo_NIR = albedo * NIR_proportion
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of NIR albedo fraction, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        albedo_NWP = self.ALBEDO(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-        RNIR_NWP = self.ALBNIRDR(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-        NIR_proportion = rt.clip(RNIR_NWP / albedo_NWP, 0, 1)
-        return NIR_proportion
-
-    def PAR_albedo(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        PAR albedo - the combined direct and diffuse visible/PAR albedo
-        Formula: PAR_albedo = ALBVISDR + ALBVISDF
-        Values range from 0 to 1, representing the fraction of incident PAR radiation reflected by the surface
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of PAR albedo, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        ALBVISDR = self.ALBVISDR(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-        ALBVISDF = self.ALBVISDF(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-        PAR_albedo = rt.clip(ALBVISDR + ALBVISDF, 0, 1)
-        return PAR_albedo
-
-    def NIR_albedo(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
-        """
-        NIR albedo - the combined direct and diffuse near-infrared albedo
-        Formula: NIR_albedo = ALBNIRDR + ALBNIRDF
-        Values range from 0 to 1, representing the fraction of incident NIR radiation reflected by the surface
-        :param time_UTC: date/time in UTC
-        :param geometry: optional target geometry
-        :param resampling: optional sampling method for resampling to target geometry
-        :return: raster of NIR albedo, numpy array for single-variable point queries, or DataFrame for multi-variable point queries
-        """
-        ALBNIRDR = self.ALBNIRDR(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-        ALBNIRDF = self.ALBNIRDF(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
-        NIR_albedo = rt.clip(ALBNIRDR + ALBNIRDF, 0, 1)
-        return NIR_albedo
-
-    def query(
-            self,
-            target_variables: Union[str, List[str]] = None,
-            targets_df: Union[pd.DataFrame, gpd.GeoDataFrame] = None,
-            time_UTC: Union[datetime, str, List[datetime], List[str], pd.Series] = None,
-            time_range: Tuple[Union[datetime, str], Union[datetime, str]] = None,
-            dataset: str = None,
-            geometry: Union[RasterGeometry, Point, MultiPoint, List, gpd.GeoSeries] = None,
-            resampling: str = None,
-            lat: Union[float, List[float], pd.Series] = None,
-            lon: Union[float, List[float], pd.Series] = None,
-            dropna: bool = True,
-            temporal_interpolation: str = TEMPORAL_INTERPOLATION,
-            variable_name: Union[str, List[str]] = None,
-            verbose: bool = False,
-            **kwargs) -> Union[np.ndarray, Raster, gpd.GeoDataFrame, dict, pd.DataFrame]:
-        if verbose is None:
-            verbose = self.verbose
-
-        normalized_target_variables = target_variables
-
-        if normalized_target_variables is None and variable_name is not None:
-            normalized_target_variables = variable_name
-
-        # Convert lat/lon to Point or MultiPoint geometry if geometry not explicitly provided
-        if geometry is None and lat is not None and lon is not None:
-            if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
-                geometry = Point(lon, lat)
-            elif hasattr(lat, '__len__') and hasattr(lon, '__len__'):
-                geometry = MultiPoint([(x, y) for x, y in zip(lon, lat)])
-
-        # Handle list/tuple of target variables (returns dict or combined DataFrame)
-        if isinstance(normalized_target_variables, (list, tuple)):
-            results = {}
-            for var in normalized_target_variables:
-                res = self.query(
-                    target_variables=var,
-                    targets_df=targets_df,
-                    time_UTC=time_UTC,
-                    time_range=time_range,
-                    dataset=dataset,
-                    geometry=geometry,
-                    resampling=resampling,
-                    lat=lat,
-                    lon=lon,
-                    dropna=dropna,
-                    temporal_interpolation=temporal_interpolation,
-                    verbose=verbose,
-                    **kwargs
-                )
-                results[var] = res
-            
-            # Combine DataFrames if all individual variable queries returned DataFrames
-            if len(results) > 0 and all(isinstance(r, pd.DataFrame) for r in results.values()):
-                dfs = list(results.values())
-                combined_df = dfs[0].copy()
-                for var, df in list(results.items())[1:]:
-                    if var in df.columns and var not in combined_df.columns:
-                        combined_df[var] = df[var]
-                return combined_df
-
-            return results
-
-        # Single target variable (string)
-        if normalized_target_variables is not None:
-            if targets_df is None and time_range is None and time_UTC is not None:
-                return self._query_raster_snapshot(
-                    target_variables=normalized_target_variables,
-                    time_UTC=time_UTC,
-                    dataset=dataset,
-                    geometry=geometry,
-                    resampling=resampling,
-                    **kwargs
-                )
-
-        # Delegation to module-level query function for time_range or targets_df queries
-        mod_result = query(
-            target_variables=normalized_target_variables,
-            targets_df=targets_df,
-            time_UTC=time_UTC,
-            time_range=time_range,
-            dataset=dataset,
-            geometry=geometry,
-            resampling=resampling,
-            lat=lat,
-            lon=lon,
-            dropna=dropna,
-            temporal_interpolation=temporal_interpolation,
-            variable_name=variable_name,
-            verbose=verbose,
-            connection=self,
-            **kwargs
-        )
-
-        if mod_result is not None:
-            return mod_result
-
-        # Safety fallback if module query returned None
-        if normalized_target_variables is not None and time_UTC is not None:
-            single_var = normalized_target_variables[0] if isinstance(normalized_target_variables, (list, tuple)) else normalized_target_variables
-            return self._query_raster_snapshot(
-                target_variables=single_var,
-                time_UTC=time_UTC,
-                dataset=dataset,
-                geometry=geometry,
-                resampling=resampling,
-                **kwargs
-            )
-
-        return None
-
-    def _should_use_legacy_raster_snapshot_query(
-            self,
-            target_variables: Union[str, List[str]] = None,
-            targets_df: Union[pd.DataFrame, gpd.GeoDataFrame] = None,
-            time_UTC: Union[datetime, str, List[datetime], List[str], pd.Series] = None,
-            time_range: Tuple[Union[datetime, str], Union[datetime, str]] = None,
-            geometry: Union[RasterGeometry, Point, MultiPoint, List, gpd.GeoSeries] = None,
-            lat: Union[float, List[float], pd.Series] = None,
-            lon: Union[float, List[float], pd.Series] = None) -> bool:
-        if targets_df is not None or time_range is not None or time_UTC is None:
-            return False
-
-        if target_variables is None:
-            return False
-
-        if isinstance(target_variables, str):
-            return True
-
-        return len(target_variables) == 1
-
-    def _query_raster_snapshot(
-            self,
-            target_variables: Union[str, List[str]],
-            time_UTC: Union[datetime, str],
-            dataset: str = None,
-            geometry: RasterGeometry = None,
-            resampling: str = None,
-            **kwargs) -> Raster:
-        if isinstance(target_variables, str):
-            variable_names = [target_variables]
-        else:
-            variable_names = list(target_variables)
-
-        if len(variable_names) != 1:
-            raise ValueError("Raster snapshot queries only support a single target variable")
-
-        variable_name = variable_names[0]
-
-        if variable_name in GEOS5FP_VARIABLES:
-            return self.variable(
-                variable_name=variable_name,
-                time_UTC=time_UTC,
-                geometry=geometry,
-                resampling=resampling,
-                interval=kwargs.get("interval"),
-                expected_hours=kwargs.get("expected_hours"),
-                min_value=kwargs.get("min_value"),
-                max_value=kwargs.get("max_value"),
-                exclude_values=kwargs.get("exclude_values"),
-                cmap=kwargs.get("cmap"),
-                clip_min=kwargs.get("clip_min"),
-                clip_max=kwargs.get("clip_max")
-            )
-
-        excluded_methods = {
-            "query", "variable", "interpolate", "download_file", "before_and_after", 
-            "product_listing", "generate_filenames", "list_GEOS5FP_granules", 
-            "list_remote_directory", "time_from_URL", "_query_raster_snapshot", 
-            "_should_use_legacy_raster_snapshot_query", "_query_point_via_opendap"
-        }
-        if hasattr(self, variable_name) and callable(getattr(self, variable_name)) and variable_name not in excluded_methods:
-            method = getattr(self, variable_name)
-            import inspect
-            sig = inspect.signature(method)
-            method_kwargs = {}
-            if "time_UTC" in sig.parameters:
-                method_kwargs["time_UTC"] = time_UTC
-            if "geometry" in sig.parameters:
-                method_kwargs["geometry"] = geometry
-            if "resampling" in sig.parameters:
-                method_kwargs["resampling"] = resampling
-            return method(**method_kwargs)
-
-        if dataset is None:
-            raise ValueError(
-                f"Dataset must be specified when using raw variable name '{variable_name}'. "
-                f"Known variables: {list(GEOS5FP_VARIABLES.keys())}"
-            )
-
-        if isinstance(time_UTC, str):
-            time_UTC = parser.parse(time_UTC)
-
-        result = self.interpolate(
-            time_UTC=time_UTC,
-            product=dataset,
-            variable=variable_name,
-            geometry=geometry,
-            resampling=resampling,
-            interval=kwargs.get("interval"),
-            expected_hours=kwargs.get("expected_hours"),
-            min_value=kwargs.get("min_value"),
-            max_value=kwargs.get("max_value"),
-            exclude_values=kwargs.get("exclude_values"),
-            cmap=kwargs.get("cmap")
-        )
-
-        clip_min = kwargs.get("clip_min")
-        clip_max = kwargs.get("clip_max")
-
-        if clip_min is not None or clip_max is not None:
-            result = rt.clip(result, clip_min, clip_max)
-
-        return result
-    
-GEOS5FPConnection.query.__doc__ = query.__doc__
+        return self.ALBNIRDR(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
