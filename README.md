@@ -31,24 +31,24 @@ Halverson, G. H. (2026). GEOS5FP: Near-real-time GEOS-5 FP near-surface meteorol
 
 ## Table of Contents
 
-- [Installation](#installation)
-- [Usage](#usage)
-  - [Creating a Connection](#creating-a-connection)
-  - [Downloading, Staging & NetCDF Validation](#downloading-staging--netcdf-validation)
-  - [Generating Gridded Raster Data](#generating-gridded-raster-data)
-  - [Generating Tabular & Point Data with `.query()`](#generating-tabular--point-data-with-query)
-  - [Using Raw GEOS-5 FP Variable Names](#using-raw-geos-5-fp-variable-names)
-  - [Querying Computed Variables](#querying-computed-variables)
-  - [Spatial Downscaling](#spatial-downscaling)
-- [Complete Queryable Variables Reference](#complete-queryable-variables-reference)
-  - [Direct GEOS-5 FP Variables](#direct-geos-5-fp-variables)
-  - [Computed / Derived Variables](#computed--derived-variables)
-  - [Variable Aliases](#variable-aliases)
-  - [Spatial & Temporal Resolution](#spatial--temporal-resolution)
-  - [Programmatic Variable Discovery](#programmatic-variable-discovery)
-- [Known Issues & Operational Notes](#known-issues--operational-notes)
-- [Release History & Technical Evolution](#release-history--technical-evolution)
-- [Data Source & Data Product Citation](#data-source--data-product-citation)
+* [Installation](#installation)
+* [Usage](#usage)
+  * [Creating a Connection](#creating-a-connection)
+  * [Downloading, Staging & NetCDF Validation](#downloading-staging--netcdf-validation)
+  * [Generating Gridded Raster Data](#generating-gridded-raster-data)
+  * [Generating Tabular & Point Data with `.query()`](#generating-tabular--point-data-with-query)
+  * [Using Raw GEOS-5 FP Variable Names](#using-raw-geos-5-fp-variable-names)
+  * [Querying Computed Variables](#querying-computed-variables)
+  * [Spatial Downscaling](#spatial-downscaling)
+* [Complete Queryable Variables Reference](#complete-queryable-variables-reference)
+  * [Direct GEOS-5 FP Variables](#direct-geos-5-fp-variables)
+  * [Computed / Derived Variables](#computed--derived-variables)
+  * [Variable Aliases](#variable-aliases)
+  * [Spatial & Temporal Resolution](#spatial--temporal-resolution)
+  * [Programmatic Variable Discovery](#programmatic-variable-discovery)
+* [Known Issues & Operational Notes](#known-issues--operational-notes)
+* [Release History & Technical Evolution](#release-history--technical-evolution)
+* [Data Source & Data Product Citation](#data-source--data-product-citation)
 
 ## Installation
 
@@ -85,7 +85,7 @@ from GEOS5FP import GEOS5FP, GEOS5FPConnection
 ### Creating a Connection
 
 ```python
-conn = GEOS5FPConnection(
+GEOS5FP_connection = GEOS5FPConnection(
     download_directory="~/data/GEOS5FP",  # Final destination for downloaded .nc4 granules
     remote="https://portal.nccs.nasa.gov/datashare/gmao/geos-fp/das",
     verbose=True,
@@ -100,15 +100,16 @@ conn = GEOS5FPConnection(
 `GEOS5FPConnection.download_file()` downloads, validates, and caches GEOS-5 FP NetCDF4 granules:
 
 ```python
-conn = GEOS5FPConnection(download_directory="~/data/GEOS5FP")
-granule = conn.download_file(URL=granule_url)
+GEOS5FP_connection = GEOS5FPConnection(download_directory="~/data/GEOS5FP")
+granule = GEOS5FP_connection.download_file(URL=granule_url)
 print(granule.filename)
 ```
 
 How granule downloads and validation work:
-- **Out-of-tree Pooch staging:** Downloads use `pooch.HTTPDownloader` (1 MiB chunks, 120s timeout, verified HTTPS). Each download attempt stages network chunks inside a fresh temporary directory under `pooch.os_cache("GEOS5FP")`, outside the configured `download_directory`—preventing partial-file lock or sync timeouts when `~/data` resides on cloud-backed storage (such as OneDrive or Google Drive).
-- **Atomic publication & inter-process locking:** Once the network transfer finishes, the completed file is published to `download_directory` via atomic `os.replace` (with a cross-filesystem temporary copy fallback) under an exclusive inter-process file lock (`_granule_file_lock`).
-- **Crash-isolated NetCDF4 validation:** Every existing or newly downloaded `.nc4` granule is validated via `validate_GEOS5FP_NetCDF_file()` using `netCDF4.Dataset` inside an isolated subprocess (`use_subprocess=True` by default). This protects parent Python workflows from low-level C++ `SIGABRT` or segmentation faults in HDF5/GDAL libraries if a truncated file is encountered.
+
+* **Out-of-tree Pooch staging:** Downloads use `pooch.HTTPDownloader` (1 MiB chunks, 120s timeout, verified HTTPS). Each download attempt stages network chunks inside a fresh temporary directory under `pooch.os_cache("GEOS5FP")`, outside the configured `download_directory`—preventing partial-file lock or sync timeouts when `~/data` resides on cloud-backed storage (such as OneDrive or Google Drive).
+* **Atomic publication & inter-process locking:** Once the network transfer finishes, the completed file is published to `download_directory` via atomic `os.replace` (with a cross-filesystem temporary copy fallback) under an exclusive inter-process file lock (`_granule_file_lock`).
+* **Crash-isolated NetCDF4 validation:** Every existing or newly downloaded `.nc4` granule is validated via `validate_GEOS5FP_NetCDF_file()` using `netCDF4.Dataset` inside an isolated subprocess (`use_subprocess=True` by default). This protects parent Python workflows from low-level C++ `SIGABRT` or segmentation faults in HDF5/GDAL libraries if a truncated file is encountered.
 
 You can also validate files or directories directly:
 
@@ -121,75 +122,87 @@ print(result.is_valid, result.metadata)
 
 ### Generating Gridded Raster Data
 
-Retrieve georeferenced `rasters.Raster` objects at any UTC timestamp, optionally reprojected/resampled to a target `RasterGeometry` or `RasterGrid` (default resampling: `"lanczos"` for gridded targets, `"nearest"` for points):
+Retrieve georeferenced `rasters.Raster` objects at any UTC timestamp, reprojected/resampled to a target `RasterGeometry` or `RasterGrid` (default resampling: `"lanczos"` for gridded targets, `"nearest"` for points):
 
 ```python
+import posixpath
 from rasters import RasterGeometry
 
 # Define target geometry (optional; omit for native 0.3125° x 0.25° GEOS-5 FP global grid)
-target_geometry = RasterGeometry.open("target_area.tif")
-time_utc = datetime(2024, 11, 15, 12, 0)
+geometry = RasterGeometry.open("target_area.tif")
+time_UTC = datetime(2024, 11, 15, 12, 0)
+downsampling = "linear"
 
-# Single-variable dedicated methods
-Ta_K = conn.Ta_K(time_UTC=time_utc, geometry=target_geometry)
-Ta_C = conn.Ta_C(time_UTC=time_utc, geometry=target_geometry)
-RH = conn.RH(time_UTC=time_utc, geometry=target_geometry)
-SM = conn.SM(time_UTC=time_utc, geometry=target_geometry)
-LAI = conn.LAI(time_UTC=time_utc, geometry=target_geometry)
-Ca = conn.Ca(time_UTC=time_utc, geometry=target_geometry)
+# Retrieve gridded rasters via dedicated SI-named methods
+Ta_C = GEOS5FP_connection.Ta_C(time_UTC=time_UTC, geometry=geometry, resampling=downsampling)
+RH = GEOS5FP_connection.RH(time_UTC=time_UTC, geometry=geometry, resampling=downsampling)
+SM = GEOS5FP_connection.SM(time_UTC=time_UTC, geometry=geometry, resampling=downsampling)
+wind_speed_mps = GEOS5FP_connection.wind_speed_mps(time_UTC=time_UTC, geometry=geometry, resampling=downsampling)
+Td_C = GEOS5FP_connection.Td_K(time_UTC=time_UTC, geometry=geometry, resampling=downsampling) - 273.15
 
 # Save raster to GeoTIFF
-Ta_C.to_geotiff("air_temperature_C.tif")
+Ta_C.to_geotiff("Ta_C.tif")
+
+# Inspect auxiliary granule filenames used for provenance metadata
+NWP_filenames = sorted([posixpath.basename(filename) for filename in GEOS5FP_connection.filenames])
 ```
 
 You can also query gridded rasters through `.query()` using a scalar variable name, a 1-element list, or a multi-variable list (which returns a `dict[str, Raster]`):
 
 ```python
 # Single-element list on a gridded geometry returns a Raster
-co2_raster = conn.query(variables=["CO2SC"], time_UTC=time_utc, geometry=target_geometry)
+CO2SC = GEOS5FP_connection.query(
+    variables=["CO2SC"],
+    time_UTC=time_UTC,
+    geometry=geometry,
+    resampling=downsampling,
+)
 
 # Multi-variable list on a gridded geometry returns a dict mapping variable names to Rasters
-raster_dict = conn.query(
-    target_variables=["Ta_C", "RH", "SM"],
-    time_UTC=time_utc,
-    geometry=target_geometry,
+GEOS5FP_inputs = GEOS5FP_connection.query(
+    variables=["Ta_C", "RH", "SM", "wind_speed_mps"],
+    time_UTC=time_UTC,
+    geometry=geometry,
+    resampling=downsampling,
 )
 ```
 
 ### Generating Tabular & Point Data with `.query()`
 
-The `.query()` method (available both as `conn.query(...)` and as a standalone function `GEOS5FP.query(...)`) provides a unified interface across single points, `MultiPoint` collections, time series, and spatio-temporal tables.
+The `.query()` method (available both as `GEOS5FP_connection.query(...)` and as a standalone function `GEOS5FP.query(...)`) provides a unified interface across `Point`, `MultiPoint`, time series, and spatio-temporal tables.
 
 #### 1. Single Point and `MultiPoint` Queries
 
 Single-variable point queries return a 1D `numpy.ndarray`; multi-variable point queries return a `geopandas.GeoDataFrame`:
 
 ```python
-from shapely.geometry import Point, MultiPoint
+from rasters import Point, MultiPoint, WGS84
 
-time_utc = datetime(2024, 11, 15, 12, 0)
+time_UTC = datetime(2024, 11, 15, 12, 0)
 
 # Single variable at a point -> returns 1D np.ndarray
-ta_val = conn.query(
+Ta_K = GEOS5FP_connection.query(
     target_variables="Ta_K",
-    time_UTC=time_utc,
-    lat=34.05,
-    lon=-118.25,
+    time_UTC=time_UTC,
+    geometry=Point(-118.25, 34.05, crs=WGS84),
 )
 
 # Multiple points at a single timestamp -> returns 1D np.ndarray of length 3
-cities = MultiPoint([
-    (-118.25, 34.05),   # Los Angeles
-    (-122.42, 37.77),   # San Francisco
-    (-73.94, 40.73),    # New York
-])
-aot_vals = conn.AOT(time_UTC=time_utc, geometry=cities)
+geometry = MultiPoint(
+    [
+        (-118.25, 34.05),   # Los Angeles
+        (-122.42, 37.77),   # San Francisco
+        (-73.94, 40.73),    # New York
+    ],
+    crs=WGS84,
+)
+AOT = GEOS5FP_connection.AOT(time_UTC=time_UTC, geometry=geometry)
 
 # Multiple variables at a point -> returns GeoDataFrame
-point_gdf = conn.query(
+point_gdf = GEOS5FP_connection.query(
     target_variables=["Ta_C", "RH", "VPD_kPa", "wind_speed_mps"],
-    time_UTC=time_utc,
-    geometry=Point(-118.25, 34.05),
+    time_UTC=time_UTC,
+    geometry=Point(-118.25, 34.05, crs=WGS84),
 )
 ```
 
@@ -200,24 +213,22 @@ Pass `time_range=(start_time, end_time)` to query OPeNDAP time slices efficientl
 ```python
 end_time = datetime(2024, 11, 15, 0, 0)
 start_time = end_time - timedelta(days=7)
+geometry = Point(-118.25, 34.05, crs=WGS84)
 
 # Single variable time-series -> returns 1D np.ndarray
-ta_series = conn.query(
+Ta_K = GEOS5FP_connection.query(
     target_variables="Ta_K",
     time_range=(start_time, end_time),
-    lat=34.05,
-    lon=-118.25,
+    geometry=geometry,
 )
 
 # Multi-variable time-series -> returns time-indexed GeoDataFrame
-df_ts = conn.query(
+ts_gdf = GEOS5FP_connection.query(
     target_variables=["Ta_C", "RH", "SM", "SWin"],
     time_range=(start_time, end_time),
-    lat=34.05,
-    lon=-118.25,
+    geometry=geometry,
     temporal_interpolation="interpolate",  # or "nearest"
 )
-print(df_ts.head())
 ```
 
 #### 3. Enriching Existing Tables (`targets_df`)
@@ -228,7 +239,7 @@ Pass a `DataFrame` or `GeoDataFrame` containing `time_UTC` and `geometry` column
 import geopandas as gpd
 from shapely.geometry import Point
 
-targets = gpd.GeoDataFrame(
+targets_df = gpd.GeoDataFrame(
     {
         "site_name": ["Los Angeles", "New York"],
         "time_UTC": [datetime(2024, 11, 15, 12), datetime(2024, 11, 15, 13)],
@@ -237,11 +248,10 @@ targets = gpd.GeoDataFrame(
     crs="EPSG:4326",
 )
 
-enriched = conn.query(
-    target_variables=["Ta_C", "RH", "SM", "COT", "AOT", "vapor_gccm", "ozone_cm"],
-    targets_df=targets,
+results_df = GEOS5FP_connection.query(
+    target_variables=["COT", "AOT", "vapor_gccm", "ozone_cm", "wind_speed_mps", "Ca"],
+    targets_df=targets_df,
 )
-print(enriched)
 ```
 
 #### 4. Vectorized Spatio-Temporal Batch Queries
@@ -250,18 +260,17 @@ Pass aligned sequences (`list`, `tuple`, `np.ndarray`, `pd.Series`, or `gpd.GeoS
 
 ```python
 import pandas as pd
-import geopandas as gpd
+from rasters import MultiPoint, WGS84
 
-data = pd.read_csv("locations.csv")  # columns: time_UTC, lat, lon
-data["time_UTC"] = pd.to_datetime(data["time_UTC"])
-gdf = gpd.GeoDataFrame(data, geometry=gpd.points_from_xy(data["lon"], data["lat"]), crs="EPSG:4326")
+input_df = pd.read_csv("calval_inputs.csv")  # columns: time_UTC, lat, lon
+time_UTC = pd.to_datetime(input_df["time_UTC"], format="mixed").tolist()
+geometry = MultiPoint(x=input_df["lon"].values, y=input_df["lat"].values, crs=WGS84)
 
-results = conn.query(
-    target_variables=["Ta_K", "RH", "SM", "LAI"],
-    time_UTC=gdf["time_UTC"],
-    geometry=gdf["geometry"],
+results_gdf = GEOS5FP_connection.query(
+    target_variables=["Ta_C", "RH", "SM", "LAI"],
+    time_UTC=time_UTC,
+    geometry=geometry,
 )
-print(results)
 ```
 
 ### Using Raw GEOS-5 FP Variable Names
@@ -269,12 +278,11 @@ print(results)
 In addition to predefined variable names, you can query any raw GEOS-5 FP variable directly by specifying `dataset`:
 
 ```python
-df_raw = conn.query(
+raw_gdf = GEOS5FP_connection.query(
     target_variables=["T2M", "PS", "QV2M"],
     dataset="tavg1_2d_slv_Nx",
     time_range=(start_time, end_time),
-    lat=34.05,
-    lon=-118.25,
+    geometry=Point(-118.25, 34.05, crs=WGS84),
 )
 ```
 
@@ -283,7 +291,7 @@ df_raw = conn.query(
 All 14 derived meteorological and radiative variables in `COMPUTED_VARIABLES` are supported across gridded raster, single-point, multi-point, time-series, and vectorized batch queries. Required base variables are resolved and fetched automatically and pruned from the final output:
 
 ```python
-results = conn.query(
+computed_gdf = GEOS5FP_connection.query(
     target_variables=[
         "Ta_C",
         "Tmin_C",
@@ -301,21 +309,26 @@ results = conn.query(
         "albedo_NIR",
     ],
     time_UTC=datetime(2024, 11, 15, 12, 0),
-    lat=34.05,
-    lon=-118.25,
+    geometry=Point(-118.25, 34.05, crs=WGS84),
 )
 ```
 
 ### Spatial Downscaling
 
-`GEOS5FP.downscaling` provides empirical thermal and moisture downscaling routines (`linear_downscale`, `bias_correct`, `downscale_air_temperature`, `downscale_soil_moisture`, `downscale_vapor_pressure_deficit`, and `downscale_relative_humidity`), and `conn.Ta_K()` accepts a fine-resolution surface temperature raster (`ST_K`) and optional `water` mask directly:
+`GEOS5FP.downscaling` provides empirical thermal and moisture downscaling routines (`linear_downscale`, `bias_correct`, `downscale_air_temperature`, `downscale_soil_moisture`, `downscale_vapor_pressure_deficit`, and `downscale_relative_humidity`), and `GEOS5FP_connection.Ta_K()` accepts a fine-resolution surface temperature raster (`ST_K`) and optional `water` mask directly:
 
 ```python
-# Downscale coarse GEOS-5 FP air temperature using fine-resolution surface temperature (ST_K)
-Ta_K_fine = conn.Ta_K(
-    time_UTC=datetime(2024, 11, 15, 12, 0),
-    ST_K=land_surface_temp_raster,
-    water=water_mask_raster,
+# Retrieve coarse GEOS-5 FP fields on a rescaled grid for regression sharpening
+coarse_geometry = geometry.rescale(13720)
+Ta_C_coarse = GEOS5FP_connection.Ta_C(time_UTC=time_UTC, geometry=coarse_geometry, resampling="linear")
+Td_C_coarse = GEOS5FP_connection.Td_K(time_UTC=time_UTC, geometry=coarse_geometry, resampling="linear") - 273.15
+SM_coarse = GEOS5FP_connection.SM(time_UTC=time_UTC, geometry=coarse_geometry, resampling="linear")
+
+# Or downscale coarse GEOS-5 FP air temperature directly using fine-resolution ST_K
+Ta_K_fine = GEOS5FP_connection.Ta_K(
+    time_UTC=time_UTC,
+    ST_K=ST_K,
+    water=water_mask,
 )
 ```
 
@@ -406,7 +419,7 @@ Variables are defined in `GEOS5FP/variables.csv` (direct GEOS-5 FP variables) an
 | `albedo_visible` | Visible surface albedo | `ALBVISDR` | fraction ($0\text{--}1$) |
 | `albedo_NIR` | Near-infrared surface albedo | `ALBNIRDR` | fraction ($0\text{--}1$) |
 
-*(Note: `NDVI` is also available as a raster method `conn.NDVI(time_UTC, geometry)` computed from `LAI` via $\text{clip}(1.05 - e^{-0.5 \cdot \text{LAI}}, 0, 1)$.)*
+*(Note: `NDVI` is also available as a raster method `GEOS5FP_connection.NDVI(time_UTC, geometry)` computed from `LAI` via $\text{clip}(1.05 - e^{-0.5 \cdot \text{LAI}}, 0, 1)$.)*
 
 ### Variable Aliases
 
@@ -422,11 +435,11 @@ Variables are defined in `GEOS5FP/variables.csv` (direct GEOS-5 FP variables) an
 
 ### Spatial & Temporal Resolution
 
-- **Native Spatial Grid:** Global latitude/longitude grid (`EPSG:4326`) at $0.3125^{\circ}$ longitude $\times$ $0.25^{\circ}$ latitude ($\approx 27.4\text{ km}$).
-- **Temporal Cadence:**
-  - `tavg1_*`: Hourly time-averaged granules centered at `:30` past each hour (`00:30`, `01:30`, ..., `23:30` UTC).
-  - `tavg3_*`: 3-hourly time-averaged granules centered at `01:30`, `04:30`, `07:30`, `10:30`, `13:30`, `16:30`, `19:30`, `22:30` UTC.
-  - `inst3_*`: 3-hourly instantaneous granules at `00:00`, `03:00`, `06:00`, `09:00`, `12:00`, `15:00`, `18:00`, `21:00` UTC.
+* **Native Spatial Grid:** Global latitude/longitude grid (`EPSG:4326`) at $0.3125^{\circ}$ longitude $\times$ $0.25^{\circ}$ latitude ($\approx 27.4\text{ km}$).
+* **Temporal Cadence:**
+  * `tavg1_*`: Hourly time-averaged granules centered at `:30` past each hour (`00:30`, `01:30`, ..., `23:30` UTC).
+  * `tavg3_*`: 3-hourly time-averaged granules centered at `01:30`, `04:30`, `07:30`, `10:30`, `13:30`, `16:30`, `19:30`, `22:30` UTC.
+  * `inst3_*`: 3-hourly instantaneous granules at `00:00`, `03:00`, `06:00`, `09:00`, `12:00`, `15:00`, `18:00`, `21:00` UTC.
 
 ### Programmatic Variable Discovery
 
@@ -440,9 +453,9 @@ print("Unit transformations:", sorted(VARIABLE_TRANSFORMATIONS.keys()))
 
 ## Known Issues & Operational Notes
 
-- **Gridded time-series queries:** `time_range=(start, end)` queries via `.query()` are supported for `Point`, `MultiPoint`, and `GeoDataFrame` targets. Gridded `RasterGrid` / `RasterGeometry` queries require a single `time_UTC` timestamp.
-- **OPeNDAP server availability:** Point, time-series, and batch table queries rely on NASA NCCS's OPeNDAP service (`opendap.nccs.nasa.gov`), which can occasionally experience transient timeouts or `504 Gateway Time-out` errors. Both `query_geos5fp_point` and `query_geos5fp_point_multi` include automatic exponential-backoff retry logic (`retries=3`) and scoped socket timeouts; you can also initialize `GEOS5FPConnection(allow_fallback=True)` to fall back to HTTP `.nc4` granule downloads for single-point queries.
-- **Granule `.lock` files:** Concurrent downloads create `<granule>.nc4.lock` files alongside cached granules in `download_directory` to prevent multi-process write collisions.
+* **Gridded time-series queries:** `time_range=(start, end)` queries via `.query()` are supported for `Point`, `MultiPoint`, and `GeoDataFrame` targets. Gridded `RasterGrid` / `RasterGeometry` queries require a single `time_UTC` timestamp.
+* **OPeNDAP server availability:** Point, time-series, and batch table queries rely on NASA NCCS's OPeNDAP service (`opendap.nccs.nasa.gov`), which can occasionally experience transient timeouts or `504 Gateway Time-out` errors. Both `query_geos5fp_point` and `query_geos5fp_point_multi` include automatic exponential-backoff retry logic (`retries=3`) and scoped socket timeouts; you can also initialize `GEOS5FPConnection(allow_fallback=True)` to fall back to HTTP `.nc4` granule downloads for single-point queries.
+* **Granule `.lock` files:** Concurrent downloads create `<granule>.nc4.lock` files alongside cached granules in `download_directory` to prevent multi-process write collisions.
 
 ## Release History & Technical Evolution
 
@@ -515,8 +528,9 @@ This package accesses GEOS-5 FP (Forward Processing) data produced by the Global
 ### Data Access
 
 GEOS-5 FP data is accessed through:
-- **OPeNDAP Server:** `https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/`
-- **HTTP Server:** `https://portal.nccs.nasa.gov/datashare/gmao/geos-fp/das`
+
+* **OPeNDAP Server:** `https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/`
+* **HTTP Server:** `https://portal.nccs.nasa.gov/datashare/gmao/geos-fp/das`
 
 Data is provided by NASA's Center for Climate Simulation (NCCS).
 
@@ -525,6 +539,7 @@ Data is provided by NASA's Center for Climate Simulation (NCCS).
 When using GEOS-5 FP data in publications, please also cite:
 
 **Data Product:**
+
 ```text
 Global Modeling and Assimilation Office (GMAO) (2015), GEOS-5 FP: GEOS Forward 
 Processing for Instrument Support, Greenbelt, MD, USA, Goddard Earth Sciences 
@@ -533,6 +548,7 @@ Accessed: [Date]
 ```
 
 **Acknowledgment:**
+
 ```text
 GEOS-5 FP data used in this study were provided by the Global Modeling and 
 Assimilation Office (GMAO) at NASA Goddard Space Flight Center through the 
