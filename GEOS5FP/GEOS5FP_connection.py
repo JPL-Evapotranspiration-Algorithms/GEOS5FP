@@ -99,6 +99,26 @@ def _granule_file_lock(destination_filename: str):
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
+def _resolve_staging_root(download_root: Path) -> Path:
+    """Resolve a writable out-of-tree staging directory, falling back to temp if os_cache is read-only."""
+    candidates = [
+        Path(pooch.os_cache("GEOS5FP")).expanduser(),
+        Path(tempfile.gettempdir()) / "GEOS5FP_cache",
+    ]
+    for candidate in candidates:
+        try:
+            makedirs(candidate, exist_ok=True)
+            resolved = candidate.resolve()
+            if not resolved.is_relative_to(download_root) and os.access(resolved, os.W_OK):
+                return resolved
+        except OSError:
+            continue
+
+    raise FailedGEOS5FPDownload(
+        f"No writable staging directory available outside download directory: {download_root}"
+    )
+
+
 def _publish_staged_file(staged_filename: str, destination_filename: str) -> None:
     try:
         os.replace(staged_filename, destination_filename)
@@ -449,12 +469,7 @@ class GEOS5FPConnection:
                 raise GEOS5FPGranuleNotAvailable(URL)
 
             download_root = Path(os.path.expanduser(self.download_directory)).resolve()
-            staging_root = Path(pooch.os_cache("GEOS5FP")).expanduser().resolve()
-            if staging_root.is_relative_to(download_root):
-                raise FailedGEOS5FPDownload(
-                    f"Pooch staging directory must be outside the download directory: {staging_root}"
-                )
-            makedirs(staging_root, exist_ok=True)
+            staging_root = _resolve_staging_root(download_root)
             makedirs(os.path.dirname(expanded_filename) or ".", exist_ok=True)
 
             download_attempts = 0
@@ -656,6 +671,16 @@ class GEOS5FPConnection:
 
         if isinstance(time_UTC, str):
             time_UTC = parser.parse(time_UTC)
+
+        if variable_name in COMPUTED_VARIABLES and hasattr(self, variable_name):
+            result = getattr(self, variable_name)(
+                time_UTC=time_UTC,
+                geometry=geometry,
+                resampling=resampling,
+            )
+            if clip_min is not None or clip_max is not None:
+                result = rt.clip(result, clip_min, clip_max)
+            return result
 
         NAME, PRODUCT, VARIABLE = get_variable_info(variable_name)
 
@@ -1061,6 +1086,9 @@ class GEOS5FPConnection:
         RH = self.RH(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         return Ta_K - (100.0 - RH * 100.0) / 5.0
 
+    def Td_C(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+        return self.Td_K(time_UTC=time_UTC, geometry=geometry, resampling=resampling) - 273.15
+
     def RH(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
         Q = self.Q(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         PS = self.PS(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
@@ -1096,6 +1124,14 @@ class GEOS5FPConnection:
         U2M = self.U2M(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         V2M = self.V2M(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
         return np.sqrt(U2M ** 2 + V2M ** 2)
+
+    def wind_speed(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Raster:
+        warnings.warn(
+            "GEOS5FPConnection.wind_speed() is deprecated; use wind_speed_mps() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.wind_speed_mps(time_UTC=time_UTC, geometry=geometry, resampling=resampling)
 
     def CO2SC(self, time_UTC: Union[datetime, str], geometry: RasterGeometry = None, resampling: str = None) -> Union[Raster, np.ndarray, pd.DataFrame]:
         return self.query(target_variables="CO2SC", time_UTC=time_UTC, geometry=geometry, resampling=resampling)

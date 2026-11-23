@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 from shapely.geometry import Point, MultiPoint
 
-from GEOS5FP import GEOS5FP
+from GEOS5FP import GEOS5FP, GEOS5FPConnection
 from GEOS5FP.GEOS5FP_point import PointQueryResult, query_geos5fp_point_multi
 
 
@@ -58,6 +58,23 @@ def test_query_single_variable_non_raster_geometry_returns_array():
 
     assert isinstance(result, np.ndarray)
     np.testing.assert_allclose(result, [0.42])
+
+
+def test_single_point_query_allow_fallback_uses_interpolate():
+    conn = GEOS5FPConnection(allow_fallback=True)
+    target_time = datetime(2024, 11, 15, 12, 0)
+
+    with patch("GEOS5FP.query.query_geos5fp_point", side_effect=TimeoutError("504 Gateway Time-out")), \
+         patch.object(conn, "interpolate", return_value=np.array([295.5])) as mock_interp:
+        result = conn.query(
+            target_variables="Ta_C",
+            time_UTC=target_time,
+            geometry=Point(-118.25, 34.05),
+        )
+
+    mock_interp.assert_called_once()
+    assert isinstance(result, np.ndarray)
+    np.testing.assert_allclose(result, [295.5 - 273.15])
 
 
 def test_query_geos5fp_point_multi_retries_and_restores_socket_timeout():

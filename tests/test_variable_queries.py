@@ -72,9 +72,10 @@ class TestAllVariablesAccessible:
             assert info is not None
             assert len(info) == 3
 
-    def test_computed_albedo_variables_registered(self):
+    def test_computed_albedo_and_td_c_variables_registered(self):
         assert "albedo_visible" in COMPUTED_VARIABLES
         assert "albedo_NIR" in COMPUTED_VARIABLES
+        assert "Td_C" in COMPUTED_VARIABLES
 
 
 class TestQueryBackwardCompatibility:
@@ -103,7 +104,7 @@ class TestQueryBackwardCompatibility:
         assert captured["resampling"] == "nearest"
         assert captured["expected_hours"] == [1.5, 4.5]
 
-    def test_query_single_element_list_and_variables_alias_on_raster(self, conn, monkeypatch):
+    def test_query_single_element_list_and_return_dict_on_raster(self, conn, monkeypatch):
         sentinel = object()
         captured = {}
 
@@ -118,9 +119,16 @@ class TestQueryBackwardCompatibility:
             time_UTC=datetime(2024, 10, 22, 18, 30),
             geometry=object()
         )
-
         assert result is sentinel
         assert captured["variable_name"] == "CO2SC"
+
+        dict_result = conn.query(
+            variables=["CO2SC"],
+            time_UTC=datetime(2024, 10, 22, 18, 30),
+            geometry=object(),
+            return_dict=True,
+        )
+        assert dict_result == {"CO2SC": sentinel}
 
     def test_query_empty_variable_list_raises(self, conn):
         with pytest.raises(ValueError, match="At least one variable must be specified"):
@@ -181,6 +189,16 @@ class TestQueryBackwardCompatibility:
         assert captured["product"] == "inst3_2d_asm_Nx"
         assert captured["variable"] == "TESTVAR"
 
+    def test_variable_method_routes_computed_variables_and_deprecated_wind_speed(self, conn, monkeypatch):
+        monkeypatch.setattr(conn, "wind_speed_mps", lambda **kwargs: 4.5)
+        monkeypatch.setattr(conn, "Td_K", lambda **kwargs: 285.15)
+
+        assert conn.variable("wind_speed_mps", time_UTC=datetime(2024, 11, 15, 12, 0), geometry=object()) == 4.5
+        assert conn.Td_C(time_UTC=datetime(2024, 11, 15, 12, 0), geometry=object()) == pytest.approx(12.0)
+
+        with pytest.warns(DeprecationWarning, match="wind_speed\(\) is deprecated"):
+            assert conn.wind_speed(time_UTC=datetime(2024, 11, 15, 12, 0), geometry=object()) == 4.5
+
     def test_multipoint_single_time_queries_all_points(self, conn):
         points = MultiPoint([(-118.25, 34.05), (-122.42, 37.77), (-73.99, 40.75)])
         target_time = datetime(2024, 11, 15, 12, 0)
@@ -195,6 +213,56 @@ class TestQueryBackwardCompatibility:
         assert isinstance(values, np.ndarray)
         assert len(values) == 3
         np.testing.assert_allclose(values, [118.25, 122.42, 73.99])
+
+    def test_batch_query_multipoint_unpacks_distinct_coordinates_and_validates_length(self, conn):
+        times = [
+            datetime(2024, 11, 15, 12, 0),
+            datetime(2024, 11, 15, 13, 0),
+            datetime(2024, 11, 15, 14, 0),
+        ]
+        points = MultiPoint([(-118.25, 34.05), (-122.42, 37.77), (-73.99, 40.75)])
+        queried_coords = []
+
+        def fake_point_query(dataset, variable, lat, lon, time_range, dropna=True):
+            queried_coords.append((lat, lon))
+            mid = time_range[0] + (time_range[1] - time_range[0]) / 2
+            df = pd.DataFrame({variable: [round(abs(lon), 2)]}, index=[mid])
+            return PointQueryResult(data=None, df=df, lat_used=lat, lon_used=lon, url="mock://opendap")
+
+        with patch("GEOS5FP.query.query_geos5fp_point", side_effect=fake_point_query):
+            vals = conn.query(target_variables="AOT", time_UTC=times, geometry=points)
+
+        assert queried_coords == [(34.05, -118.25), (37.77, -122.42), (40.75, -73.99)]
+        np.testing.assert_allclose(vals, [118.25, 122.42, 73.99])
+
+        with pytest.raises(ValueError, match="Number of points in MultiPoint"):
+            conn.query(
+                target_variables="AOT",
+                time_UTC=times,
+                geometry=MultiPoint([(-118.25, 34.05), (-122.42, 37.77)]),
+            )
+
+    def test_multipoint_time_range_preserves_point_index(self, conn):
+        points = MultiPoint([(-118.25, 34.05), (-122.42, 37.77)])
+        t0 = datetime(2024, 11, 15, 12, 0)
+        t1 = datetime(2024, 11, 15, 13, 0)
+
+        def fake_point_query(dataset, variable, lat, lon, time_range, dropna=True):
+            val = 10.0 if lon == -118.25 else 20.0
+            df = pd.DataFrame({variable: [val, val + 1.0]}, index=pd.DatetimeIndex([t0, t1], name="time"))
+            return PointQueryResult(data=None, df=df, lat_used=lat, lon_used=lon, url="mock://opendap")
+
+        with patch("GEOS5FP.query.query_geos5fp_point", side_effect=fake_point_query):
+            res = conn.query(
+                target_variables="AOT",
+                time_range=(t0, t1),
+                geometry=points,
+            )
+
+        assert isinstance(res, gpd.GeoDataFrame)
+        assert "point_index" in res.columns
+        assert list(res["point_index"]) == [0, 0, 1, 1]
+        np.testing.assert_allclose(res["AOT"].values, [10.0, 11.0, 20.0, 21.0])
 
     def test_batch_query_all_computed_variables_and_interpolation(self, conn):
         t0 = datetime(2024, 11, 15, 12, 0)
@@ -230,13 +298,14 @@ class TestQueryBackwardCompatibility:
             return fake_multi(dataset, [variable], lat, lon, time_range, dropna=dropna)
 
         all_vars = [
-            "RH", "Ta_C", "Tmin_C", "SVP_Pa", "Ea_Pa", "VPD_kPa", "Td_K",
+            "RH", "Ta_C", "Tmin_C", "SVP_Pa", "Ea_Pa", "VPD_kPa", "Td_K", "Td_C",
             "wind_speed_mps", "PAR_proportion", "NIR_proportion",
             "PAR_albedo", "NIR_albedo", "albedo_visible", "albedo_NIR",
             "vapor_gccm", "ozone_cm"
         ]
 
-        with patch("GEOS5FP.query.query_geos5fp_point_multi", side_effect=fake_multi),              patch("GEOS5FP.query.query_geos5fp_point", side_effect=fake_single):
+        with patch("GEOS5FP.query.query_geos5fp_point_multi", side_effect=fake_multi), \
+             patch("GEOS5FP.query.query_geos5fp_point", side_effect=fake_single):
             out = conn.query(target_variables=all_vars, targets_df=targets)
 
         # Midpoint interpolation checks
@@ -256,3 +325,4 @@ class TestQueryBackwardCompatibility:
         assert out["Ea_Pa"].iloc[0] > 0.0
         assert out["VPD_kPa"].iloc[0] > 0.0
         assert out["Td_K"].iloc[0] < 295.0
+        assert out["Td_C"].iloc[0] == pytest.approx(out["Td_K"].iloc[0] - 273.15)

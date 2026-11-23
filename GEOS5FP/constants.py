@@ -58,6 +58,7 @@ GEOS5FP_VARIABLES = _load_variables()
 VARIABLE_TRANSFORMATIONS = {
     'Ta_C': lambda x: x - 273.15,        # Convert Kelvin to Celsius
     'Tmin_C': lambda x: x - 273.15,      # Convert Kelvin to Celsius
+    'Td_C': lambda x: x - 273.15,        # Convert Kelvin to Celsius
     'vapor_gccm': lambda x: x / 10.0,    # Convert kg/m^2 (mm) to g/cm^2
     'ozone_cm': lambda x: x / 1000.0,    # Convert Dobson units to cm-atm
 }
@@ -71,7 +72,8 @@ COMPUTED_VARIABLES = {
     'Ea_Pa',          # Actual Vapor Pressure (computed from RH and SVP)
     'SVP_Pa',         # Saturated Vapor Pressure (computed from Ta)
     'VPD_kPa',        # Vapor Pressure Deficit (computed from SVP and Ea)
-    'Td_K',           # Dew Point Temperature (computed from Ta and RH)
+    'Td_K',           # Dew Point Temperature in Kelvin (computed from Ta and RH)
+    'Td_C',           # Dew Point Temperature in Celsius (computed from Ta and RH)
     'wind_speed_mps', # Wind speed in m/s (computed from U2M and V2M)
     'PAR_proportion', # PAR albedo fraction (computed from ALBVISDR / ALBEDO)
     'NIR_proportion', # NIR albedo fraction (computed from ALBNIRDR / ALBEDO)
