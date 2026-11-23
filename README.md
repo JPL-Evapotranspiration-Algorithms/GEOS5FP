@@ -1,7 +1,5 @@
 # `GEOS5FP` Python Package
 
-[![CI](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/actions/workflows/ci.yml/badge.svg)](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/actions/workflows/ci.yml)
-
 The `GEOS5FP` Python package provides programmatic retrieval, spatio-temporal interpolation, empirical downscaling, and tabular extraction for NASA's near-real-time **GEOS-5 Forward Processing (GEOS-5 FP)** meteorological assimilation products.
 
 [Gregory H. Halverson](https://github.com/gregory-halverson-jpl) (they/them)<br>
@@ -419,7 +417,7 @@ Variables are defined in `GEOS5FP/variables.csv` (direct GEOS-5 FP variables) an
 | `albedo_visible` | Visible surface albedo | `ALBVISDR` | fraction ($0\text{--}1$) |
 | `albedo_NIR` | Near-infrared surface albedo | `ALBNIRDR` | fraction ($0\text{--}1$) |
 
-*(Note: `NDVI` is also available as a raster method `GEOS5FP_connection.NDVI(time_UTC, geometry)` computed from `LAI` via $\text{clip}(1.05 - e^{-0.5 \cdot \text{LAI}}, 0, 1)$.)*
+*(Note: `NDVI` is also available as a raster method `GEOS5FP_connection.NDVI(time_UTC, geometry)` computed from `LAI` via* $\text{clip}(1.05 - e^{-0.5 \cdot \text{LAI}}, 0, 1)$*.)*
 
 ### Variable Aliases
 
@@ -452,6 +450,17 @@ print("Unit transformations:", sorted(VARIABLE_TRANSFORMATIONS.keys()))
 ```
 
 ## Known Issues & Operational Notes
+
+### Open Issues Tracked for `v2.26.0`
+
+* **[#74](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/74) (Critical) — `MultiPoint` coordinate broadcasting in batch `.query()`:** Pairing a single `MultiPoint` of length $N$ with a `time_UTC` sequence of length $N$ currently broadcasts `geoms[0]` across all $N$ rows instead of unpacking `list(geometry.geoms)`. Pass a list of `Point` objects or a `GeoSeries` as a workaround until `v2.26.0`.
+* **[#75](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/75) (High) — Read-only `$HOME` in containerized HPC environments:** `download_file()` stages chunks under `pooch.os_cache("GEOS5FP")` (`~/.cache/GEOS5FP`), which raises `PermissionError` in Apptainer/Singularity containers where `$HOME` is mounted read-only; `v2.26.0` will fall back to `tempfile.gettempdir()`.
+* **[#76](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/76) (High) — Gridded single-element `.query()` return type:** Passing a 1-element list (e.g., `variables=["CO2SC"]`) on a gridded geometry returns a `Raster` (matching scalar queries), whereas 2+ variables return `dict[str, Raster]`. `v2.26.0` adds an explicit `return_dict: bool = False` option for callers expecting a dictionary regardless of variable count.
+* **[#77](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/77) — `allow_fallback=True` on single-timestamp point `.query()` calls:** `allow_fallback=True` is currently honored by `GEOS5FPConnection.variable()` but bypassed in the single-timestamp point branch of `query()`.
+* **[#78](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/78) & [#79](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/79) — `Td_C` parity and `COMPUTED_VARIABLES` in `.variable()`:** `Td_C()` / `'Td_C'` is not yet defined alongside `Td_K()`, and calling `conn.variable()` directly with a computed variable name raises `KeyError`.
+* **[#80](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/80) & [#81](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/81) — Deprecated `wind_speed()` alias & multi-point `time_range` indexing:** `wind_speed()` was removed in favor of `wind_speed_mps()` (`#80`), and single-variable `time_range` queries over a `MultiPoint` of $M > 1$ points return an interleaved 1D array without point indices (`#81`).
+
+### General Operational Notes
 
 * **Gridded time-series queries:** `time_range=(start, end)` queries via `.query()` are supported for `Point`, `MultiPoint`, and `GeoDataFrame` targets. Gridded `RasterGrid` / `RasterGeometry` queries require a single `time_UTC` timestamp.
 * **OPeNDAP server availability:** Point, time-series, and batch table queries rely on NASA NCCS's OPeNDAP service (`opendap.nccs.nasa.gov`), which can occasionally experience transient timeouts or `504 Gateway Time-out` errors. Both `query_geos5fp_point` and `query_geos5fp_point_multi` include automatic exponential-backoff retry logic (`retries=3`) and scoped socket timeouts; you can also initialize `GEOS5FPConnection(allow_fallback=True)` to fall back to HTTP `.nc4` granule downloads for single-point queries.
