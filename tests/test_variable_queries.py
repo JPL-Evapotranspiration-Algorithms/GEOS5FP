@@ -1,12 +1,13 @@
 """Tests for variable information lookup and queries."""
 import pytest
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import patch
 import pandas as pd
+import geopandas as gpd
 import numpy as np
 from shapely.geometry import Point, MultiPoint
 
-from GEOS5FP import GEOS5FPConnection
+from GEOS5FP import GEOS5FPConnection, query
 from GEOS5FP.constants import GEOS5FP_VARIABLES, COMPUTED_VARIABLES
 from GEOS5FP.GEOS5FP_point import PointQueryResult
 
@@ -102,6 +103,63 @@ class TestQueryBackwardCompatibility:
         assert captured["resampling"] == "nearest"
         assert captured["expected_hours"] == [1.5, 4.5]
 
+    def test_query_single_element_list_and_variables_alias_on_raster(self, conn, monkeypatch):
+        sentinel = object()
+        captured = {}
+
+        def fake_variable(**kwargs):
+            captured.update(kwargs)
+            return sentinel
+
+        monkeypatch.setattr(conn, 'variable', fake_variable)
+
+        result = conn.query(
+            variables=["CO2SC"],
+            time_UTC=datetime(2024, 10, 22, 18, 30),
+            geometry=object()
+        )
+
+        assert result is sentinel
+        assert captured["variable_name"] == "CO2SC"
+
+    def test_query_empty_variable_list_raises(self, conn):
+        with pytest.raises(ValueError, match="At least one variable must be specified"):
+            conn.query(
+                variables=[],
+                time_UTC=datetime(2024, 10, 22, 18, 30),
+                geometry=object()
+            )
+
+    def test_query_multiple_variables_on_raster_returns_dict(self, conn, monkeypatch):
+        def fake_variable(**kwargs):
+            return f"raster:{kwargs['variable_name']}"
+
+        monkeypatch.setattr(conn, 'variable', fake_variable)
+
+        result = conn.query(
+            variables=["CO2SC", "Ta_K"],
+            time_UTC=datetime(2024, 10, 22, 18, 30),
+            geometry=object()
+        )
+
+        assert result == {"CO2SC": "raster:CO2SC", "Ta_K": "raster:Ta_K"}
+
+    def test_standalone_query_raster_snapshot(self, monkeypatch):
+        sentinel = object()
+
+        def fake_variable(self, **kwargs):
+            assert kwargs["variable_name"] == "CO2SC"
+            return sentinel
+
+        monkeypatch.setattr(GEOS5FPConnection, 'variable', fake_variable)
+
+        result = query(
+            ["CO2SC"],
+            time_UTC=datetime(2024, 10, 22, 18, 30),
+            geometry=object()
+        )
+        assert result is sentinel
+
     def test_query_routes_raw_single_raster_snapshot_to_interpolate(self, conn, monkeypatch):
         sentinel = object()
         captured = {}
@@ -137,3 +195,64 @@ class TestQueryBackwardCompatibility:
         assert isinstance(values, np.ndarray)
         assert len(values) == 3
         np.testing.assert_allclose(values, [118.25, 122.42, 73.99])
+
+    def test_batch_query_all_computed_variables_and_interpolation(self, conn):
+        t0 = datetime(2024, 11, 15, 12, 0)
+        t1 = datetime(2024, 11, 15, 13, 0)
+        target_time = datetime(2024, 11, 15, 12, 30)
+
+        targets = gpd.GeoDataFrame(
+            {"time_UTC": [target_time], "geometry": [Point(-118.25, 34.05)]},
+            crs="EPSG:4326"
+        )
+
+        def fake_multi(dataset, variables, lat, lon, time_range, dropna=True):
+            data = {
+                "qv2m": [0.008, 0.010],
+                "ps": [101000.0, 102000.0],
+                "t2m": [290.0, 300.0],
+                "t2mmin": [280.0, 282.0],
+                "u2m": [3.0, 3.0],
+                "v2m": [4.0, 4.0],
+                "tqv": [20.0, 30.0],
+                "to3": [300.0, 320.0],
+                "albedo": [0.20, 0.20],
+                "albvisdr": [0.05, 0.05],
+                "albvisdf": [0.04, 0.04],
+                "albnirdr": [0.10, 0.10],
+                "albnirdf": [0.08, 0.08],
+            }
+            cols = {v: data[v] for v in variables}
+            df = pd.DataFrame(cols, index=pd.DatetimeIndex([t0, t1], name="time"))
+            return PointQueryResult(data=None, df=df, lat_used=lat, lon_used=lon, url="mock://opendap")
+
+        def fake_single(dataset, variable, lat, lon, time_range, dropna=True):
+            return fake_multi(dataset, [variable], lat, lon, time_range, dropna=dropna)
+
+        all_vars = [
+            "RH", "Ta_C", "Tmin_C", "SVP_Pa", "Ea_Pa", "VPD_kPa", "Td_K",
+            "wind_speed_mps", "PAR_proportion", "NIR_proportion",
+            "PAR_albedo", "NIR_albedo", "albedo_visible", "albedo_NIR",
+            "vapor_gccm", "ozone_cm"
+        ]
+
+        with patch("GEOS5FP.query.query_geos5fp_point_multi", side_effect=fake_multi),              patch("GEOS5FP.query.query_geos5fp_point", side_effect=fake_single):
+            out = conn.query(target_variables=all_vars, targets_df=targets)
+
+        # Midpoint interpolation checks
+        assert out["Ta_C"].iloc[0] == pytest.approx(295.0 - 273.15)
+        assert out["Tmin_C"].iloc[0] == pytest.approx(281.0 - 273.15)
+        assert out["wind_speed_mps"].iloc[0] == pytest.approx(5.0)
+        assert out["vapor_gccm"].iloc[0] == pytest.approx(2.5)
+        assert out["ozone_cm"].iloc[0] == pytest.approx(0.31)
+        assert out["PAR_proportion"].iloc[0] == pytest.approx(0.25)
+        assert out["NIR_proportion"].iloc[0] == pytest.approx(0.50)
+        assert out["PAR_albedo"].iloc[0] == pytest.approx(0.09)
+        assert out["NIR_albedo"].iloc[0] == pytest.approx(0.18)
+        assert out["albedo_visible"].iloc[0] == pytest.approx(0.05)
+        assert out["albedo_NIR"].iloc[0] == pytest.approx(0.10)
+        assert 0.0 < out["RH"].iloc[0] < 1.0
+        assert out["SVP_Pa"].iloc[0] > 0.0
+        assert out["Ea_Pa"].iloc[0] > 0.0
+        assert out["VPD_kPa"].iloc[0] > 0.0
+        assert out["Td_K"].iloc[0] < 295.0

@@ -5,6 +5,8 @@ import logging
 import os
 import shutil
 import tempfile
+import time as pytime
+import warnings
 from datetime import date, datetime, timedelta, time
 from os import makedirs
 from os.path import expanduser, exists, join
@@ -124,6 +126,7 @@ class GEOS5FPConnection:
     DEFAULT_URL_BASE = "https://portal.nccs.nasa.gov/datashare/gmao/geos-fp/das"
     DEFAULT_TIMEOUT_SECONDS = 500
     DEFAULT_RETRIES = 3
+    DEFAULT_LISTING_TTL_SECONDS = 600
 
     query = _query_func
 
@@ -131,21 +134,30 @@ class GEOS5FPConnection:
             self,
             download_directory: str = None,
             remote: str = None,
-            save_products: bool = False,
+            save_products: bool = None,
             verbose: bool = True,
             use_opendap: bool = True,
-            allow_fallback: bool = False):
+            allow_fallback: bool = False,
+            listing_ttl_seconds: float = DEFAULT_LISTING_TTL_SECONDS):
         if download_directory is None:
             download_directory = DEFAULT_DOWNLOAD_DIRECTORY
 
         if remote is None:
             remote = self.DEFAULT_URL_BASE
 
+        if save_products is not None:
+            warnings.warn(
+                "The 'save_products' parameter is deprecated and no longer has any effect.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         self.download_directory = download_directory
         self.remote = remote
         self._listings = {}
+        self.listing_ttl_seconds = listing_ttl_seconds
         self.filenames = set([])
-        self.save_products = save_products
+        self.save_products = bool(save_products) if save_products is not None else False
         self.verbose = verbose
         self.use_opendap = use_opendap and HAS_OPENDAP_SUPPORT
         self.allow_fallback = allow_fallback
@@ -160,9 +172,15 @@ class GEOS5FPConnection:
 
         return display_string
 
+    def _head_status(self, URL: str, timeout: float = 30) -> int:
+        with create_robust_session() as session:
+            response = session.head(URL, timeout=timeout, verify=True)
+            return response.status_code
+
     def _check_remote(self):
         logger.info(f"checking URL: {cl.URL(self.remote)}")
-        response = requests.head(self.remote)
+        with create_robust_session() as session:
+            response = session.head(self.remote, timeout=30, verify=True)
         status = response.status_code
         duration = response.elapsed.total_seconds()
 
@@ -191,11 +209,11 @@ class GEOS5FPConnection:
         return posixpath.join(self.remote, f"Y{year:04d}") + "/"
 
     def is_year_available(self, year: int) -> bool:
-        return requests.head(self.year_URL(year)).status_code != 404
+        return self._head_status(self.year_URL(year)) != 404
 
     def months_available_in_year(self, year) -> List[date]:
         year_URL = self.year_URL(year)
-        if requests.head(year_URL).status_code == 404:
+        if self._head_status(year_URL) == 404:
             raise GEOS5FPYearNotAvailable(f"GEOS-5 FP year not available: {year_URL}")
         listing = self.list_remote_directory(year_URL)
         dates = sorted([date(year, int(item[1:]), 1) for item in listing if item.startswith("M")])
@@ -205,11 +223,11 @@ class GEOS5FPConnection:
         return posixpath.join(self.remote, f"Y{year:04d}", f"M{month:02d}") + "/"
 
     def is_month_available(self, year: int, month: int) -> bool:
-        return requests.head(self.month_URL(year, month)).status_code != 404
+        return self._head_status(self.month_URL(year, month)) != 404
 
     def dates_available_in_month(self, year, month) -> List[date]:
         month_URL = self.month_URL(year, month)
-        if requests.head(month_URL).status_code == 404:
+        if self._head_status(month_URL) == 404:
             raise GEOS5FPMonthNotAvailable(f"GEOS-5 FP month not available: {month_URL}")
         listing = self.list_remote_directory(month_URL)
         dates = sorted([date(year, month, int(item[1:])) for item in listing if item.startswith("D")])
@@ -224,7 +242,7 @@ class GEOS5FPConnection:
         return posixpath.join(self.remote, f"Y{year:04d}", f"M{month:02d}", f"D{day:02d}") + "/"
 
     def is_day_available(self, date_UTC: Union[date, str]) -> bool:
-        return requests.head(self.day_URL(date_UTC)).status_code != 404
+        return self._head_status(self.day_URL(date_UTC)) != 404
 
     @property
     def latest_date_available(self) -> date:
@@ -250,7 +268,7 @@ class GEOS5FPConnection:
         while retries > 0:
             retries -= 1
             try:
-                return self.list_GEOS5FP_granules(self.latest_date_available).sort_values(by="time_UTC").iloc[-1].time_UTC.to_pydatetime()
+                return self.list_GEOS5FP_granules(self.latest_date_available, refresh=True).sort_values(by="time_UTC").iloc[-1].time_UTC.to_pydatetime()
             except Exception as e:
                 logger.warning(e)
                 sleep(wait_seconds)
@@ -259,11 +277,24 @@ class GEOS5FPConnection:
     def time_from_URL(self, URL: str) -> datetime:
         return datetime.strptime(URL.split(".")[-3], "%Y%m%d_%H%M")
 
-    def list_remote_directory(self, URL: str, timeout: float = None, retries: int = None) -> List[str]:
-        if URL in self._listings:
-            return self._listings[URL]
+    def list_remote_directory(
+            self,
+            URL: str,
+            timeout: float = None,
+            retries: int = None,
+            refresh: bool = False) -> List[str]:
+        now = pytime.monotonic()
+        if not refresh and URL in self._listings:
+            cached_entry = self._listings[URL]
+            if isinstance(cached_entry, tuple) and len(cached_entry) == 2:
+                cached_at, listing = cached_entry
+                if self.listing_ttl_seconds is None or (now - cached_at) < self.listing_ttl_seconds:
+                    return listing
+            else:
+                return cached_entry
+
         listing = HTTP_listing(URL, timeout=timeout, retries=retries)
-        self._listings[URL] = listing
+        self._listings[URL] = (now, listing)
         return listing
 
     def list_GEOS5FP_granules(
@@ -271,18 +302,19 @@ class GEOS5FPConnection:
             date_UTC: Union[datetime, str],
             product_name: str = None,
             timeout: float = None,
-            retries: int = None) -> pd.DataFrame:
+            retries: int = None,
+            refresh: bool = False) -> pd.DataFrame:
         if timeout is None:
             timeout = self.DEFAULT_TIMEOUT_SECONDS
         if retries is None:
             retries = self.DEFAULT_RETRIES
 
         day_URL = self.day_URL(date_UTC)
-        if requests.head(day_URL).status_code == 404:
+        if self._head_status(day_URL) == 404:
             raise GEOS5FPDayNotAvailable(f"GEOS-5 FP day not available: {day_URL}")
 
         logger.info(f"listing URL: {cl.URL(day_URL)}")
-        listing = self.list_remote_directory(day_URL, timeout=timeout, retries=retries)
+        listing = self.list_remote_directory(day_URL, timeout=timeout, retries=retries, refresh=refresh)
 
         if product_name is None:
             URLs = sorted([posixpath.join(day_URL, f) for f in listing if f.endswith(".nc4")])

@@ -17,8 +17,6 @@ dependencies = [
     "affine",
     "beautifulsoup4",
     "colored-logging",
-    "dask",
-    "ECOv002-calval-tables>=1.11.0",
     "geopandas>=1.1.1",
     "matplotlib",
     "netcdf4",
@@ -27,12 +25,10 @@ dependencies = [
     "pooch",
     "pyproj",
     "python-dateutil",
-    "pytictoc",
     "rasterio",
     "rasters>=1.13.2",
     "requests",
     "scipy",
-    "sentinel-tiles",
     "shapely",
     "urllib3",
     "xarray"
@@ -41,6 +37,10 @@ dependencies = [
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
+examples = [
+    "ECOv002-calval-tables>=1.11.0",
+    "sentinel-tiles"
+]
 dev = [
     "build",
     "pytest>=6.0",

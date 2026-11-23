@@ -13,7 +13,7 @@ NASA Jet Propulsion Laboratory 329G
 If you use the `GEOS5FP` Python package in your research or software, please cite it as:
 
 ```text
-Halverson, G. H. (2026). GEOS5FP: Near-real-time GEOS-5 FP near-surface meteorology in Python (Version 2.24.0) [Computer software]. NASA Jet Propulsion Laboratory. [https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP)
+Halverson, G. H. (2026). GEOS5FP: Near-real-time GEOS-5 FP near-surface meteorology in Python (Version 2.25.0) [Computer software]. NASA Jet Propulsion Laboratory. https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP
 ```
 
 **BibTeX:**
@@ -23,9 +23,9 @@ Halverson, G. H. (2026). GEOS5FP: Near-real-time GEOS-5 FP near-surface meteorol
   author       = {Halverson, Gregory H.},
   title        = {{GEOS5FP}: Near-real-time {GEOS-5 FP} near-surface meteorology in {Python}},
   year         = {2026},
-  version      = {2.24.0},
+  version      = {2.25.0},
   institution  = {NASA Jet Propulsion Laboratory},
-  url          = {[https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP)}
+  url          = {https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP}
 }
 ```
 
@@ -375,20 +375,14 @@ For detailed information about all variables, including formulas for computed va
 
 ## Known Issues & Limitations
 
-For the full catalog of open bugs, edge cases, and technical debt, see **[GEOS5FP_KNOWN_ISSUES.md](GEOS5FP_KNOWN_ISSUES.md)**. Key current limitations include:
+For the full catalog of tracked issues and architectural background, see **[GEOS5FP_KNOWN_ISSUES.md](GEOS5FP_KNOWN_ISSUES.md)** and **[GEOS5FP_DEVELOPMENT_PLAN.md](GEOS5FP_DEVELOPMENT_PLAN.md)**. Current operational considerations include:
 
-- **Single-element list on raster geometries (`v2.24.0`)**: Passing a 1-element list (e.g., `["CO2SC"]`) or `variables=` keyword argument to `GEOS5FPConnection.query()` with a `RasterGrid` / `RasterGeometry` currently raises `ValueError: Multiple variables can only be queried for point geometries` instead of unwrapping to a single-variable raster query. Pass a scalar string (`"CO2SC"`) as a workaround until patched.
-- **Multi-variable raster queries**: Querying multiple variables simultaneously (`len(variables) > 1`) via `.query()` is currently supported only for point and `GeoDataFrame` geometries; gridded geometries must be queried one variable at a time.
-- **Computed variables in `.query()`**:
-  - In **vectorized batch mode**, `SVP_Pa`, `Ea_Pa`, `VPD_kPa`, `Td_K`, `PAR_proportion`, `NIR_proportion`, `PAR_albedo`, and `NIR_albedo` are listed in `COMPUTED_VARIABLES` but are not yet evaluated in the batch computation block (returning `None`).
-  - In **single-point and time-series OPeNDAP modes**, computed variables (such as `RH`, `Ta_C`, `wind_speed_mps`, and `VPD_kPa`) are not yet resolved automatically via `.query()`; query the base variables or use the dedicated connection methods (e.g., `conn.RH(...)`, `conn.Ta_C(...)`) instead.
-- **Nearest-neighbor temporal matching in batch queries**: Vectorized batch queries match target timestamps to the nearest available GEOS-5 FP timestep within ±2 hours rather than performing linear temporal interpolation between bracketing timesteps.
-- **Unit conversions in direct OPeNDAP point queries**: Unit scaling applied by dedicated connection methods—such as `vapor_gccm` (`TQV / 10`) and `ozone_cm` (`TO3 / 1000`)—is not yet applied automatically when querying via OPeNDAP point paths.
+- **Raster time-series queries**: Time-series queries (`time_range=(start, end)`) via `.query()` are supported for point and `GeoDataFrame` geometries; gridded geometries require single-timestamp `time_UTC` queries.
 - **OPeNDAP server availability**: Point and time-series queries depend on NASA NCCS's OPeNDAP service (`opendap.nccs.nasa.gov`), which can occasionally experience transient timeouts or 504 gateway errors; automatic retry logic is built in, and `allow_fallback=True` can be set on `GEOS5FPConnection` to fall back to HTTP NetCDF4 granule downloads for single-point queries.
 
 ## Release History & Architecture Evolution
 
-For the complete commit-by-commit and version-by-version history across all 42 releases, see **[GEOS5FP_HISTORY.md](GEOS5FP_HISTORY.md)**.
+For the complete commit-by-commit and version-by-version history across all releases, see **[GEOS5FP_HISTORY.md](GEOS5FP_HISTORY.md)**.
 
 ### Architectural Milestones
 
@@ -398,15 +392,15 @@ For the complete commit-by-commit and version-by-version history across all 42 r
 | **2. Package Restructuring & Resilience** | `v1.1.1` – `v1.3.2` | Renamed package to uppercase `GEOS5FP`, eliminated intermediate GeoTIFF caches, replaced `wget` with streaming Python downloads, added subprocess-isolated NetCDF validation to protect against GDAL/HDF5 C++ crashes, and added legacy SSL fallback handling. |
 | **3. OPeNDAP Point Queries & Tabular Engine** | `v2.0.0` – `v2.11.0` | Introduced `GEOS5FP_point.py` for direct OPeNDAP time-series and point queries, added `GEOS5FP/variables.csv` as the single source of truth for variable mappings, implemented vectorized spatio-temporal batching with `cluster_times`, and added 7-day temporal chunking. |
 | **4. Query Modularization & Computed Variables** | `v2.12.0` – `v2.20.0` | Extracted `query()` into `GEOS5FP/query.py`, standardized single-variable point queries to return `np.ndarray`, expanded computed variables (`RH`, `Ta_C`, `Tmin_C`, `wind_speed_mps`, `PAR_albedo`, `NIR_albedo`, `albedo_visible`, `albedo_NIR`), and unified snapshot query routing. |
-| **5. Download Staging & GDAL-Free Fallbacks** | `v2.21.0` – `v2.24.0` | Fixed `tavg3` expected-hour intervals (`[1.5, 4.5, ..., 22.5]`), migrated file downloads to `pooch.HTTPDownloader` with out-of-tree staging and inter-process file locks (preventing cloud-sync corruption), and added pure-`netCDF4` fallbacks in `GEOS5FPGranule` and validation when `gdal_HDF5.so` is unavailable. |
+| **5. Download Staging, GDAL-Free Fallbacks & Query Unification** | `v2.21.0` – `v2.25.0` | Fixed `tavg3` expected-hour intervals, migrated downloads to `pooch.HTTPDownloader` with out-of-tree staging and inter-process file locks, added pure-`netCDF4` fallbacks when `gdal_HDF5.so` is unavailable, unified single-element and multi-variable raster queries, and completed full computed-variable, unit-scaling, and temporal-interpolation support across all `.query()` modes. |
 
 ### Recent Releases
 
+- **`v2.25.0`** (2026-11-23) — Fixed single-element sequence & `variables=` alias handling on gridded geometries (`#60`), added multi-variable raster `dict` returns (`#65`), enabled standalone `query()` raster calls (`#66`), implemented all 14 `COMPUTED_VARIABLES` across batch/point/time-series modes (`#61`, `#62`), applied `vapor_gccm`/`ozone_cm` unit scaling (`#63`) and linear temporal interpolation in batch queries (`#64`), scoped socket timeouts & added retries to `query_geos5fp_point_multi` (`#67`), added TTL cache invalidation to directory listings (`#68`), and cleaned up dependencies and `makefile` (`#69`, `#71`).
 - **`v2.24.0`** (2026-11-17) — Added pure-`netCDF4` reading and validation fallbacks when GDAL's HDF5 plugin (`gdal_HDF5.so`) is missing, preventing false corruption deletions.
 - **`v2.23.0`** (2026-11-10) — Fixed Pooch download progress bar display and staging behavior.
 - **`v2.22.0`** (2026-11-10) — Replaced custom streaming download code with `pooch.HTTPDownloader`, temporary staging outside `download_directory`, atomic cross-device publication, and inter-process file locking.
 - **`v2.21.0`** (2026-10-12) — Fixed default interval and expected-hour handling (`[1.5, 4.5, ..., 22.5]`) for `tavg3_*` products.
-- **`v2.20.0`** (2026-07-23) — Fixed single-time snapshot query routing and `MultiPoint` OPeNDAP handling.
 
 ## Data Source & Citation
 

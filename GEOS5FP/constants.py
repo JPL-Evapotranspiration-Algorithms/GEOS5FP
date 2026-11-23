@@ -56,7 +56,10 @@ GEOS5FP_VARIABLES = _load_variables()
 # Variable transformations (applied after data retrieval)
 # Maps variable names to transformation functions
 VARIABLE_TRANSFORMATIONS = {
-    'Ta_C': lambda x: x - 273.15,  # Convert Kelvin to Celsius
+    'Ta_C': lambda x: x - 273.15,        # Convert Kelvin to Celsius
+    'Tmin_C': lambda x: x - 273.15,      # Convert Kelvin to Celsius
+    'vapor_gccm': lambda x: x / 10.0,    # Convert kg/m^2 (mm) to g/cm^2
+    'ozone_cm': lambda x: x / 1000.0,    # Convert Dobson units to cm-atm
 }
 
 # Computed/derived variables that require calling methods
