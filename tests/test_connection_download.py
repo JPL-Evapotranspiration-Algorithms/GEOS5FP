@@ -110,6 +110,60 @@ def test_download_uses_pooch_staging_and_retries(tmp_path, monkeypatch):
     assert len(replace_attempts) == 2
 
 
+def test_download_staging_falls_back_when_os_cache_readonly(tmp_path, monkeypatch):
+    download_directory = tmp_path / "synced"
+    destination = download_directory / "granule.nc4"
+    readonly_cache = tmp_path / "readonly_home" / ".cache" / "GEOS5FP"
+    fallback_tmp = tmp_path / "container_tmp"
+    fallback_tmp.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(
+        connection_module.pooch,
+        "os_cache",
+        lambda app_name: str(readonly_cache),
+    )
+    monkeypatch.setattr(
+        connection_module.tempfile,
+        "gettempdir",
+        lambda: str(fallback_tmp),
+    )
+
+    real_makedirs = connection_module.makedirs
+
+    def blocked_makedirs(path, exist_ok=False):
+        if Path(path) == readonly_cache:
+            raise PermissionError("Read-only file system")
+        return real_makedirs(path, exist_ok=exist_ok)
+
+    monkeypatch.setattr(connection_module, "makedirs", blocked_makedirs)
+
+    session = MagicMock()
+    session.__enter__.return_value = session
+    session.head.return_value = SimpleNamespace(
+        status_code=200,
+        raise_for_status=lambda: None,
+    )
+    monkeypatch.setattr(connection_module, "create_robust_session", lambda: session)
+    monkeypatch.setattr(connection_module.requests, "get", lambda url, **kwargs: ChunkedResponse())
+    monkeypatch.setattr(
+        validation_module,
+        "validate_GEOS5FP_NetCDF_file",
+        lambda filename, verbose: SimpleNamespace(is_valid=True, metadata={}, errors=[]),
+    )
+
+    connection = connection_module.GEOS5FPConnection(download_directory=str(download_directory))
+    result = connection.download_file(
+        URL="https://example.test/granule.nc4",
+        filename=str(destination),
+        retries=1,
+        wait_seconds=0,
+    )
+
+    assert result.filename == str(destination)
+    assert destination.read_bytes() == b"GEOSFP"
+    assert (fallback_tmp / "GEOS5FP_cache").exists()
+
+
 def test_download_maps_missing_day(tmp_path, monkeypatch):
     session = MagicMock()
     session.__enter__.return_value = session

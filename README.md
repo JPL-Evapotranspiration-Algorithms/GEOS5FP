@@ -11,7 +11,7 @@ NASA Jet Propulsion Laboratory 329G
 If you use the `GEOS5FP` Python package in your research or software, please cite it as:
 
 ```text
-Halverson, G. H. (2026). GEOS5FP: Near-real-time GEOS-5 FP near-surface meteorology in Python (Version 2.25.0) [Computer software]. NASA Jet Propulsion Laboratory. https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP
+Halverson, G. H. (2026). GEOS5FP: Near-real-time GEOS-5 FP near-surface meteorology in Python (Version 2.26.0) [Computer software]. NASA Jet Propulsion Laboratory. https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP
 ```
 
 **BibTeX:**
@@ -21,7 +21,7 @@ Halverson, G. H. (2026). GEOS5FP: Near-real-time GEOS-5 FP near-surface meteorol
   author       = {Halverson, Gregory H.},
   title        = {{GEOS5FP}: Near-real-time {GEOS-5 FP} near-surface meteorology in {Python}},
   year         = {2026},
-  version      = {2.25.0},
+  version      = {2.26.0},
   institution  = {NASA Jet Propulsion Laboratory},
   url          = {https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP}
 }
@@ -105,7 +105,7 @@ print(granule.filename)
 
 How granule downloads and validation work:
 
-* **Out-of-tree Pooch staging:** Downloads use `pooch.HTTPDownloader` (1 MiB chunks, 120s timeout, verified HTTPS). Each download attempt stages network chunks inside a fresh temporary directory under `pooch.os_cache("GEOS5FP")`, outside the configured `download_directory`—preventing partial-file lock or sync timeouts when `~/data` resides on cloud-backed storage (such as OneDrive or Google Drive).
+* **Out-of-tree Pooch staging with read-only container fallback:** Downloads use `pooch.HTTPDownloader` (1 MiB chunks, 120s timeout, verified HTTPS). Each download attempt stages network chunks inside a fresh temporary directory under `pooch.os_cache("GEOS5FP")` (automatically falling back to `tempfile.gettempdir()` when `$HOME` is read-only in containerized HPC environments), outside the configured `download_directory`.
 * **Atomic publication & inter-process locking:** Once the network transfer finishes, the completed file is published to `download_directory` via atomic `os.replace` (with a cross-filesystem temporary copy fallback) under an exclusive inter-process file lock (`_granule_file_lock`).
 * **Crash-isolated NetCDF4 validation:** Every existing or newly downloaded `.nc4` granule is validated via `validate_GEOS5FP_NetCDF_file()` using `netCDF4.Dataset` inside an isolated subprocess (`use_subprocess=True` by default). This protects parent Python workflows from low-level C++ `SIGABRT` or segmentation faults in HDF5/GDAL libraries if a truncated file is encountered.
 
@@ -133,10 +133,10 @@ downsampling = "linear"
 
 # Retrieve gridded rasters via dedicated SI-named methods
 Ta_C = GEOS5FP_connection.Ta_C(time_UTC=time_UTC, geometry=geometry, resampling=downsampling)
+Td_C = GEOS5FP_connection.Td_C(time_UTC=time_UTC, geometry=geometry, resampling=downsampling)
 RH = GEOS5FP_connection.RH(time_UTC=time_UTC, geometry=geometry, resampling=downsampling)
 SM = GEOS5FP_connection.SM(time_UTC=time_UTC, geometry=geometry, resampling=downsampling)
 wind_speed_mps = GEOS5FP_connection.wind_speed_mps(time_UTC=time_UTC, geometry=geometry, resampling=downsampling)
-Td_C = GEOS5FP_connection.Td_K(time_UTC=time_UTC, geometry=geometry, resampling=downsampling) - 273.15
 
 # Save raster to GeoTIFF
 Ta_C.to_geotiff("Ta_C.tif")
@@ -148,7 +148,7 @@ NWP_filenames = sorted([posixpath.basename(filename) for filename in GEOS5FP_con
 You can also query gridded rasters through `.query()` using a scalar variable name, a 1-element list, or a multi-variable list (which returns a `dict[str, Raster]`):
 
 ```python
-# Single-element list on a gridded geometry returns a Raster
+# Single-element list on a gridded geometry returns a Raster (or a dict when return_dict=True)
 CO2SC = GEOS5FP_connection.query(
     variables=["CO2SC"],
     time_UTC=time_UTC,
@@ -162,6 +162,7 @@ GEOS5FP_inputs = GEOS5FP_connection.query(
     time_UTC=time_UTC,
     geometry=geometry,
     resampling=downsampling,
+    return_dict=True,
 )
 ```
 
@@ -206,7 +207,7 @@ point_gdf = GEOS5FP_connection.query(
 
 #### 2. Point Time-Series Queries (`time_range`)
 
-Pass `time_range=(start_time, end_time)` to query OPeNDAP time slices efficiently (automatically chunked into 7-day windows for long single-point requests):
+Pass `time_range=(start_time, end_time)` to query OPeNDAP time slices efficiently (automatically chunked into 7-day windows for long single-point requests; multi-point time series preserve `point_index` and `geometry`):
 
 ```python
 end_time = datetime(2024, 11, 15, 0, 0)
@@ -254,7 +255,7 @@ results_df = GEOS5FP_connection.query(
 
 #### 4. Vectorized Spatio-Temporal Batch Queries
 
-Pass aligned sequences (`list`, `tuple`, `np.ndarray`, `pd.Series`, or `gpd.GeoSeries`) of timestamps and geometries. `GEOS5FP` automatically groups records by unique `(lat, lon)` coordinates, clusters timestamps into 1-day batches, fetches all variables per dataset in consolidated OPeNDAP calls, and linearly interpolates to each target timestamp:
+Pass aligned sequences (`list`, `tuple`, `np.ndarray`, `pd.Series`, `gpd.GeoSeries`, or a matching `MultiPoint`) of timestamps and geometries. `GEOS5FP` automatically groups records by unique `(lat, lon)` coordinates, clusters timestamps into 1-day batches, fetches all variables per dataset in consolidated OPeNDAP calls, and linearly interpolates to each target timestamp:
 
 ```python
 import pandas as pd
@@ -286,7 +287,7 @@ raw_gdf = GEOS5FP_connection.query(
 
 ### Querying Computed Variables
 
-All 14 derived meteorological and radiative variables in `COMPUTED_VARIABLES` are supported across gridded raster, single-point, multi-point, time-series, and vectorized batch queries. Required base variables are resolved and fetched automatically and pruned from the final output:
+All 15 derived meteorological and radiative variables in `COMPUTED_VARIABLES` are supported across gridded raster, single-point, multi-point, time-series, and vectorized batch queries. Required base variables are resolved and fetched automatically and pruned from the final output:
 
 ```python
 computed_gdf = GEOS5FP_connection.query(
@@ -298,6 +299,7 @@ computed_gdf = GEOS5FP_connection.query(
         "Ea_Pa",
         "VPD_kPa",
         "Td_K",
+        "Td_C",
         "wind_speed_mps",
         "PAR_proportion",
         "NIR_proportion",
@@ -319,7 +321,7 @@ computed_gdf = GEOS5FP_connection.query(
 # Retrieve coarse GEOS-5 FP fields on a rescaled grid for regression sharpening
 coarse_geometry = geometry.rescale(13720)
 Ta_C_coarse = GEOS5FP_connection.Ta_C(time_UTC=time_UTC, geometry=coarse_geometry, resampling="linear")
-Td_C_coarse = GEOS5FP_connection.Td_K(time_UTC=time_UTC, geometry=coarse_geometry, resampling="linear") - 273.15
+Td_C_coarse = GEOS5FP_connection.Td_C(time_UTC=time_UTC, geometry=coarse_geometry, resampling="linear")
 SM_coarse = GEOS5FP_connection.SM(time_UTC=time_UTC, geometry=coarse_geometry, resampling="linear")
 
 # Or downscale coarse GEOS-5 FP air temperature directly using fine-resolution ST_K
@@ -340,42 +342,42 @@ Variables are defined in `GEOS5FP/variables.csv` (direct GEOS-5 FP variables) an
 
 | Variable Name | Description | GEOS-5 FP Product | Raw Variable | Units |
 | :--- | :--- | :--- | :--- | :--- |
-| `SM`, `SFMC` | Top layer soil moisture | `tavg1_2d_lnd_Nx` | `SFMC` | fraction ($\text{m}^3\,\text{m}^{-3}$) |
-| `LAI` | Leaf area index | `tavg1_2d_lnd_Nx` | `LAI` | $\text{m}^2\,\text{m}^{-2}$ |
-| `LHLAND` | Latent heat flux over land | `tavg1_2d_lnd_Nx` | `LHLAND` | $\text{W}\,\text{m}^{-2}$ |
-| `EFLUX` | Total latent energy flux | `tavg1_2d_flx_Nx` | `EFLUX` | $\text{W}\,\text{m}^{-2}$ |
+| `SM`, `SFMC` | Top layer soil moisture | `tavg1_2d_lnd_Nx` | `SFMC` | fraction ($	ext{m}^3\,	ext{m}^{-3}$) |
+| `LAI` | Leaf area index | `tavg1_2d_lnd_Nx` | `LAI` | $	ext{m}^2\,	ext{m}^{-2}$ |
+| `LHLAND` | Latent heat flux over land | `tavg1_2d_lnd_Nx` | `LHLAND` | $	ext{W}\,	ext{m}^{-2}$ |
+| `EFLUX` | Total latent energy flux | `tavg1_2d_flx_Nx` | `EFLUX` | $	ext{W}\,	ext{m}^{-2}$ |
 
 #### Temperature
 
 | Variable Name | Description | GEOS-5 FP Product | Raw Variable | Units |
 | :--- | :--- | :--- | :--- | :--- |
-| `Ta`, `Ta_K` | Air temperature at 2 m | `tavg1_2d_slv_Nx` | `T2M` | $\text{K}$ |
-| `Ts`, `Ts_K` | Surface skin temperature | `tavg1_2d_slv_Nx` | `TS` | $\text{K}$ |
-| `Tmin`, `Tmin_K` | Minimum air temperature at 2 m | `inst3_2d_asm_Nx` | `T2MMIN` | $\text{K}$ |
+| `Ta`, `Ta_K` | Air temperature at 2 m | `tavg1_2d_slv_Nx` | `T2M` | $	ext{K}$ |
+| `Ts`, `Ts_K` | Surface skin temperature | `tavg1_2d_slv_Nx` | `TS` | $	ext{K}$ |
+| `Tmin`, `Tmin_K` | Minimum air temperature at 2 m | `inst3_2d_asm_Nx` | `T2MMIN` | $	ext{K}$ |
 
 #### Pressure and Humidity
 
 | Variable Name | Description | GEOS-5 FP Product | Raw Variable | Units |
 | :--- | :--- | :--- | :--- | :--- |
-| `PS` | Surface pressure | `tavg1_2d_slv_Nx` | `PS` | $\text{Pa}$ |
-| `Q` | Specific humidity at 2 m | `tavg1_2d_slv_Nx` | `QV2M` | $\text{kg}\,\text{kg}^{-1}$ |
+| `PS` | Surface pressure | `tavg1_2d_slv_Nx` | `PS` | $	ext{Pa}$ |
+| `Q` | Specific humidity at 2 m | `tavg1_2d_slv_Nx` | `QV2M` | $	ext{kg}\,	ext{kg}^{-1}$ |
 
 #### Wind
 
 | Variable Name | Description | GEOS-5 FP Product | Raw Variable | Units |
 | :--- | :--- | :--- | :--- | :--- |
-| `U2M` | Eastward wind component at 2 m | `inst3_2d_asm_Nx` | `U2M` | $\text{m}\,\text{s}^{-1}$ |
-| `V2M` | Northward wind component at 2 m | `inst3_2d_asm_Nx` | `V2M` | $\text{m}\,\text{s}^{-1}$ |
+| `U2M` | Eastward wind component at 2 m | `inst3_2d_asm_Nx` | `U2M` | $	ext{m}\,	ext{s}^{-1}$ |
+| `V2M` | Northward wind component at 2 m | `inst3_2d_asm_Nx` | `V2M` | $	ext{m}\,	ext{s}^{-1}$ |
 
 #### Atmospheric Composition
 
 | Variable Name | Description | GEOS-5 FP Product | Raw Variable | Units |
 | :--- | :--- | :--- | :--- | :--- |
-| `vapor_kgsqm` | Total precipitable water vapor | `inst3_2d_asm_Nx` | `TQV` | $\text{kg}\,\text{m}^{-2}$ |
-| `vapor_gccm` | Total precipitable water vapor | `inst3_2d_asm_Nx` | `TQV` | $\text{g}\,\text{cm}^{-2}$ (`TQV / 10`) |
-| `ozone_dobson` | Total column ozone | `inst3_2d_asm_Nx` | `TO3` | Dobson units ($\text{DU}$) |
-| `ozone_cm` | Total column ozone | `inst3_2d_asm_Nx` | `TO3` | $\text{cm-atm}$ (`TO3 / 1000`) |
-| `CO2SC`, `Ca` | Atmospheric $\text{CO}_2$ surface concentration | `tavg3_2d_chm_Nx` | `CO2SC` | $\text{ppmv}$ |
+| `vapor_kgsqm` | Total precipitable water vapor | `inst3_2d_asm_Nx` | `TQV` | $	ext{kg}\,	ext{m}^{-2}$ |
+| `vapor_gccm` | Total precipitable water vapor | `inst3_2d_asm_Nx` | `TQV` | $	ext{g}\,	ext{cm}^{-2}$ (`TQV / 10`) |
+| `ozone_dobson` | Total column ozone | `inst3_2d_asm_Nx` | `TO3` | Dobson units ($	ext{DU}$) |
+| `ozone_cm` | Total column ozone | `inst3_2d_asm_Nx` | `TO3` | $	ext{cm-atm}$ (`TO3 / 1000`) |
+| `CO2SC`, `Ca` | Atmospheric $	ext{CO}_2$ surface concentration | `tavg3_2d_chm_Nx` | `CO2SC` | $	ext{ppmv}$ |
 | `AOT` | Aerosol optical thickness (total extinction) | `tavg3_2d_aer_Nx` | `TOTEXTTAU` | dimensionless |
 | `COT` | Cloud optical thickness | `tavg1_2d_rad_Nx` | `TAUTOT` | dimensionless |
 
@@ -383,41 +385,42 @@ Variables are defined in `GEOS5FP/variables.csv` (direct GEOS-5 FP variables) an
 
 | Variable Name | Description | GEOS-5 FP Product | Raw Variable | Units |
 | :--- | :--- | :--- | :--- | :--- |
-| `SWin` | Net surface downward shortwave flux | `tavg1_2d_rad_Nx` | `SWGNT` | $\text{W}\,\text{m}^{-2}$ |
-| `SWTDN` | Top-of-atmosphere incident shortwave flux | `tavg1_2d_rad_Nx` | `SWTDN` | $\text{W}\,\text{m}^{-2}$ |
-| `PARDR` | Surface downward direct beam PAR flux | `tavg1_2d_lnd_Nx` | `PARDR` | $\text{W}\,\text{m}^{-2}$ |
-| `PARDF` | Surface downward diffuse PAR flux | `tavg1_2d_lnd_Nx` | `PARDF` | $\text{W}\,\text{m}^{-2}$ |
+| `SWin` | Net surface downward shortwave flux | `tavg1_2d_rad_Nx` | `SWGNT` | $	ext{W}\,	ext{m}^{-2}$ |
+| `SWTDN` | Top-of-atmosphere incident shortwave flux | `tavg1_2d_rad_Nx` | `SWTDN` | $	ext{W}\,	ext{m}^{-2}$ |
+| `PARDR` | Surface downward direct beam PAR flux | `tavg1_2d_lnd_Nx` | `PARDR` | $	ext{W}\,	ext{m}^{-2}$ |
+| `PARDF` | Surface downward diffuse PAR flux | `tavg1_2d_lnd_Nx` | `PARDF` | $	ext{W}\,	ext{m}^{-2}$ |
 
 #### Albedo Components
 
 | Variable Name | Description | GEOS-5 FP Product | Raw Variable | Units |
 | :--- | :--- | :--- | :--- | :--- |
-| `ALBEDO` | Total surface albedo | `tavg1_2d_rad_Nx` | `ALBEDO` | fraction ($0\text{--}1$) |
-| `ALBVISDR` | Direct beam visible surface albedo | `tavg1_2d_rad_Nx` | `ALBVISDR` | fraction ($0\text{--}1$) |
-| `ALBVISDF` | Diffuse beam visible surface albedo | `tavg1_2d_rad_Nx` | `ALBVISDF` | fraction ($0\text{--}1$) |
-| `ALBNIRDR` | Direct beam near-infrared surface albedo | `tavg1_2d_rad_Nx` | `ALBNIRDR` | fraction ($0\text{--}1$) |
-| `ALBNIRDF` | Diffuse beam near-infrared surface albedo | `tavg1_2d_rad_Nx` | `ALBNIRDF` | fraction ($0\text{--}1$) |
+| `ALBEDO` | Total surface albedo | `tavg1_2d_rad_Nx` | `ALBEDO` | fraction ($0	ext{--}1$) |
+| `ALBVISDR` | Direct beam visible surface albedo | `tavg1_2d_rad_Nx` | `ALBVISDR` | fraction ($0	ext{--}1$) |
+| `ALBVISDF` | Diffuse beam visible surface albedo | `tavg1_2d_rad_Nx` | `ALBVISDF` | fraction ($0	ext{--}1$) |
+| `ALBNIRDR` | Direct beam near-infrared surface albedo | `tavg1_2d_rad_Nx` | `ALBNIRDR` | fraction ($0	ext{--}1$) |
+| `ALBNIRDF` | Diffuse beam near-infrared surface albedo | `tavg1_2d_rad_Nx` | `ALBNIRDF` | fraction ($0	ext{--}1$) |
 
 ### Computed / Derived Variables
 
 | Variable Name | Description | Formula / Dependencies | Units |
 | :--- | :--- | :--- | :--- |
-| `Ta_C` | Air temperature at 2 m in Celsius | $T_a - 273.15$ (`Ta_K`) | $^{\circ}\text{C}$ |
-| `Tmin_C` | Minimum air temperature at 2 m in Celsius | $T_{\min} - 273.15$ (`Tmin_K`) | $^{\circ}\text{C}$ |
-| `RH` | Relative humidity (Magnus-Tetens formulation) | Derived from `Q`, `PS`, `Ta` | fraction ($0\text{--}1$) |
-| `SVP_Pa` | Saturated vapor pressure | $610.8 \exp\!\left(\frac{17.27\, T_{a,C}}{T_{a,C} + 237.3}\right)$ (`Ta`) | $\text{Pa}$ |
-| `Ea_Pa` | Actual vapor pressure | $\text{RH} \times \text{SVP}_{\text{Pa}}$ (`Q`, `PS`, `Ta`) | $\text{Pa}$ |
-| `VPD_kPa` | Vapor pressure deficit | $\max(\text{SVP}_{\text{Pa}} - E_{a,\text{Pa}},\, 0) / 1000$ (`Q`, `PS`, `Ta`) | $\text{kPa}$ |
-| `Td_K` | Dew point temperature | $T_a - (100 - 100 \cdot \text{RH}) / 5$ (`Q`, `PS`, `Ta`) | $\text{K}$ |
-| `wind_speed_mps` | Horizontal wind speed magnitude at 2 m | $\sqrt{U_{2\text{M}}^2 + V_{2\text{M}}^2}$ (`U2M`, `V2M`) | $\text{m}\,\text{s}^{-1}$ |
-| `PAR_proportion` | Visible / PAR direct albedo fraction | $\text{ALBVISDR} / \text{ALBEDO}$ | fraction ($0\text{--}1$) |
-| `NIR_proportion` | Near-infrared direct albedo fraction | $\text{ALBNIRDR} / \text{ALBEDO}$ | fraction ($0\text{--}1$) |
-| `PAR_albedo` | Combined direct + diffuse visible/PAR albedo | $\text{ALBVISDR} + \text{ALBVISDF}$ | fraction ($0\text{--}1$) |
-| `NIR_albedo` | Combined direct + diffuse NIR albedo | $\text{ALBNIRDR} + \text{ALBNIRDF}$ | fraction ($0\text{--}1$) |
-| `albedo_visible` | Visible surface albedo | `ALBVISDR` | fraction ($0\text{--}1$) |
-| `albedo_NIR` | Near-infrared surface albedo | `ALBNIRDR` | fraction ($0\text{--}1$) |
+| `Ta_C` | Air temperature at 2 m in Celsius | $T_a - 273.15$ (`Ta_K`) | $^{\circ}	ext{C}$ |
+| `Tmin_C` | Minimum air temperature at 2 m in Celsius | $T_{\min} - 273.15$ (`Tmin_K`) | $^{\circ}	ext{C}$ |
+| `RH` | Relative humidity (Magnus-Tetens formulation) | Derived from `Q`, `PS`, `Ta` | fraction ($0	ext{--}1$) |
+| `SVP_Pa` | Saturated vapor pressure | $610.8 \exp\!\left(rac{17.27\, T_{a,C}}{T_{a,C} + 237.3}ight)$ (`Ta`) | $	ext{Pa}$ |
+| `Ea_Pa` | Actual vapor pressure | $	ext{RH} 	imes 	ext{SVP}_{	ext{Pa}}$ (`Q`, `PS`, `Ta`) | $	ext{Pa}$ |
+| `VPD_kPa` | Vapor pressure deficit | $\max(	ext{SVP}_{	ext{Pa}} - E_{a,	ext{Pa}},\, 0) / 1000$ (`Q`, `PS`, `Ta`) | $	ext{kPa}$ |
+| `Td_K` | Dew point temperature in Kelvin | $T_a - (100 - 100 \cdot 	ext{RH}) / 5$ (`Q`, `PS`, `Ta`) | $	ext{K}$ |
+| `Td_C` | Dew point temperature in Celsius | $T_{d,K} - 273.15$ (`Q`, `PS`, `Ta`) | $^{\circ}	ext{C}$ |
+| `wind_speed_mps` | Horizontal wind speed magnitude at 2 m | $\sqrt{U_{2	ext{M}}^2 + V_{2	ext{M}}^2}$ (`U2M`, `V2M`) | $	ext{m}\,	ext{s}^{-1}$ |
+| `PAR_proportion` | Visible / PAR direct albedo fraction | $	ext{ALBVISDR} / 	ext{ALBEDO}$ | fraction ($0	ext{--}1$) |
+| `NIR_proportion` | Near-infrared direct albedo fraction | $	ext{ALBNIRDR} / 	ext{ALBEDO}$ | fraction ($0	ext{--}1$) |
+| `PAR_albedo` | Combined direct + diffuse visible/PAR albedo | $	ext{ALBVISDR} + 	ext{ALBVISDF}$ | fraction ($0	ext{--}1$) |
+| `NIR_albedo` | Combined direct + diffuse NIR albedo | $	ext{ALBNIRDR} + 	ext{ALBNIRDF}$ | fraction ($0	ext{--}1$) |
+| `albedo_visible` | Visible surface albedo | `ALBVISDR` | fraction ($0	ext{--}1$) |
+| `albedo_NIR` | Near-infrared surface albedo | `ALBNIRDR` | fraction ($0	ext{--}1$) |
 
-*(Note: `NDVI` is also available as a raster method `GEOS5FP_connection.NDVI(time_UTC, geometry)` computed from `LAI` via* $\text{clip}(1.05 - e^{-0.5 \cdot \text{LAI}}, 0, 1)$*.)*
+*(Note: `NDVI` is also available as a raster method `GEOS5FP_connection.NDVI(time_UTC, geometry)` computed from `LAI` via* $	ext{clip}(1.05 - e^{-0.5 \cdot 	ext{LAI}}, 0, 1)$*.)*
 
 ### Variable Aliases
 
@@ -427,13 +430,13 @@ Variables are defined in `GEOS5FP/variables.csv` (direct GEOS-5 FP variables) an
 | `Ta` | `Ta_K` | Air temperature at 2 m in Kelvin |
 | `Ts` | `Ts_K` | Surface temperature in Kelvin |
 | `Tmin` | `Tmin_K` | Minimum temperature at 2 m in Kelvin |
-| `Ca` | `CO2SC` | Atmospheric $\text{CO}_2$ concentration in ppmv |
+| `Ca` | `CO2SC` | Atmospheric $	ext{CO}_2$ concentration in ppmv |
 | `vapor_kgsqm` / `vapor_gccm` | `TQV` | Precipitable water vapor (`vapor_gccm` scaled by $0.1$) |
 | `ozone_dobson` / `ozone_cm` | `TO3` | Total column ozone (`ozone_cm` scaled by $0.001$) |
 
 ### Spatial & Temporal Resolution
 
-* **Native Spatial Grid:** Global latitude/longitude grid (`EPSG:4326`) at $0.3125^{\circ}$ longitude $\times$ $0.25^{\circ}$ latitude ($\approx 27.4\text{ km}$).
+* **Native Spatial Grid:** Global latitude/longitude grid (`EPSG:4326`) at $0.3125^{\circ}$ longitude $	imes$ $0.25^{\circ}$ latitude ($pprox 27.4	ext{ km}$).
 * **Temporal Cadence:**
   * `tavg1_*`: Hourly time-averaged granules centered at `:30` past each hour (`00:30`, `01:30`, ..., `23:30` UTC).
   * `tavg3_*`: 3-hourly time-averaged granules centered at `01:30`, `04:30`, `07:30`, `10:30`, `13:30`, `16:30`, `19:30`, `22:30` UTC.
@@ -451,17 +454,6 @@ print("Unit transformations:", sorted(VARIABLE_TRANSFORMATIONS.keys()))
 
 ## Known Issues & Operational Notes
 
-### Open Issues Tracked for `v2.26.0`
-
-* **[#74](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/74) (Critical) — `MultiPoint` coordinate broadcasting in batch `.query()`:** Pairing a single `MultiPoint` of length $N$ with a `time_UTC` sequence of length $N$ currently broadcasts `geoms[0]` across all $N$ rows instead of unpacking `list(geometry.geoms)`. Pass a list of `Point` objects or a `GeoSeries` as a workaround until `v2.26.0`.
-* **[#75](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/75) (High) — Read-only `$HOME` in containerized HPC environments:** `download_file()` stages chunks under `pooch.os_cache("GEOS5FP")` (`~/.cache/GEOS5FP`), which raises `PermissionError` in Apptainer/Singularity containers where `$HOME` is mounted read-only; `v2.26.0` will fall back to `tempfile.gettempdir()`.
-* **[#76](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/76) (High) — Gridded single-element `.query()` return type:** Passing a 1-element list (e.g., `variables=["CO2SC"]`) on a gridded geometry returns a `Raster` (matching scalar queries), whereas 2+ variables return `dict[str, Raster]`. `v2.26.0` adds an explicit `return_dict: bool = False` option for callers expecting a dictionary regardless of variable count.
-* **[#77](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/77) — `allow_fallback=True` on single-timestamp point `.query()` calls:** `allow_fallback=True` is currently honored by `GEOS5FPConnection.variable()` but bypassed in the single-timestamp point branch of `query()`.
-* **[#78](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/78) & [#79](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/79) — `Td_C` parity and `COMPUTED_VARIABLES` in `.variable()`:** `Td_C()` / `'Td_C'` is not yet defined alongside `Td_K()`, and calling `conn.variable()` directly with a computed variable name raises `KeyError`.
-* **[#80](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/80) & [#81](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/81) — Deprecated `wind_speed()` alias & multi-point `time_range` indexing:** `wind_speed()` was removed in favor of `wind_speed_mps()` (`#80`), and single-variable `time_range` queries over a `MultiPoint` of $M > 1$ points return an interleaved 1D array without point indices (`#81`).
-
-### General Operational Notes
-
 * **Gridded time-series queries:** `time_range=(start, end)` queries via `.query()` are supported for `Point`, `MultiPoint`, and `GeoDataFrame` targets. Gridded `RasterGrid` / `RasterGeometry` queries require a single `time_UTC` timestamp.
 * **OPeNDAP server availability:** Point, time-series, and batch table queries rely on NASA NCCS's OPeNDAP service (`opendap.nccs.nasa.gov`), which can occasionally experience transient timeouts or `504 Gateway Time-out` errors. Both `query_geos5fp_point` and `query_geos5fp_point_multi` include automatic exponential-backoff retry logic (`retries=3`) and scoped socket timeouts; you can also initialize `GEOS5FPConnection(allow_fallback=True)` to fall back to HTTP `.nc4` granule downloads for single-point queries.
 * **Granule `.lock` files:** Concurrent downloads create `<granule>.nc4.lock` files alongside cached granules in `download_directory` to prevent multi-process write collisions.
@@ -478,13 +470,14 @@ print("Unit transformations:", sorted(VARIABLE_TRANSFORMATIONS.keys()))
    Built `validate_GEOS5FP_NetCDF_file.py` with subprocess isolation (`_validate_in_subprocess`) and JSON IPC to prevent low-level C++ `SIGABRT`/segfault crashes in GDAL/HDF5 from terminating parent pipelines, and added `GEOS5FPSSLError` with multi-stage TLS fallback handling for NASA NCCS connections.
 4. **OPeNDAP Point Queries, Vectorized Tables & Computed Variables (`v2.0.0` – `v2.11.0`, Nov 2025 – Dec 2025):**
    Introduced `GEOS5FP_point.py` (`query_geos5fp_point` and `query_geos5fp_point_multi`) using `xarray` and `netCDF4` against NASA's OPeNDAP server, centralized variable definitions in `GEOS5FP/variables.csv`, implemented vectorized spatio-temporal batching (`targets_df`, coordinate grouping, `cluster_times`), added computed meteorological variables (`RH`, `Ta_C`, `Ea_Pa`, `SVP_Pa`, `VPD_kPa`, `Td_K`, `wind_speed_mps`, albedo proportions), added `pandas.Series` / `DatetimeIndex` / array `time_UTC` support, disabled remote CF decoding to prevent OPeNDAP hangs, and implemented 7-day temporal chunking for long time-series queries.
-5. **Query Modularization, Pooch Staged Downloads, GDAL Independence & Query Parity (`v2.12.0` – `v2.25.0`, Jan 2026 – Nov 2026):**
-   Extracted `query()` into `GEOS5FP/query.py`; standardized single-variable non-raster queries to return `numpy.ndarray`; fixed `tavg3` expected-hour intervals (`[1.5, 4.5, ..., 22.5]`); migrated downloads to `pooch.HTTPDownloader` with out-of-tree staging (`pooch.os_cache("GEOS5FP")`), atomic cross-device publication, and inter-process file locks (`_granule_file_lock`) to prevent cloud-sync write timeouts; added pure-`netCDF4` reading and validation fallbacks when GDAL's `gdal_HDF5.so` plugin is absent; and unified single-element sequences, multi-variable raster `dict` returns, all 14 computed variables, unit scaling, and linear temporal interpolation across all `.query()` modes.
+5. **Query Modularization, Pooch Staged Downloads, GDAL Independence & Query Parity (`v2.12.0` – `v2.26.0`, Jan 2026 – Nov 2026):**
+   Extracted `query()` into `GEOS5FP/query.py`; standardized single-variable non-raster queries to return `numpy.ndarray`; fixed `tavg3` expected-hour intervals (`[1.5, 4.5, ..., 22.5]`); migrated downloads to `pooch.HTTPDownloader` with out-of-tree staging (`pooch.os_cache("GEOS5FP")` with read-only container fallback to `tempfile.gettempdir()`), atomic cross-device publication, and inter-process file locks (`_granule_file_lock`); added pure-`netCDF4` reading and validation fallbacks when GDAL's `gdal_HDF5.so` plugin is absent; and unified `MultiPoint` batch unpacking, `return_dict` gridded outputs, `allow_fallback` point interpolation, `Td_C`, and all 15 computed variables across all `.query()` modes.
 
 ### Complete Release Log
 
 | Version | Date (UTC) | Summary |
 | :--- | :--- | :--- |
+| **`v2.26.0`** | 2026-11-23 | Unpacked `MultiPoint` geometries in spatio-temporal batch `.query()` (`#74`); added writable `tempfile.gettempdir()` fallback when `pooch.os_cache()` is read-only (`#75`); added explicit `return_dict` option to `.query()` for gridded geometries (`#76`); honored `allow_fallback=True` on single-timestamp point `.query()` calls (`#77`); added `Td_C()` and computed `'Td_C'` (`#78`); routed `COMPUTED_VARIABLES` in `GEOS5FPConnection.variable()` (`#79`); added deprecated `wind_speed()` wrapper delegating to `wind_speed_mps()` (`#80`); and preserved `point_index` in `MultiPoint` `time_range` queries (`#81`). |
 | **`v2.25.0`** | 2026-11-23 | Unified single-element sequence & `variables=` alias handling on gridded geometries (`#60`); added multi-variable raster `dict[str, Raster]` returns (`#65`) and standalone `query()` raster support (`#66`); implemented all 14 `COMPUTED_VARIABLES` across batch, point, and time-series modes (`#61`, `#62`); applied `vapor_gccm` and `ozone_cm` unit transformations (`#63`) and linear temporal interpolation in batch queries (`#64`); scoped socket timeouts with thread locking and added retry backoff to `query_geos5fp_point_multi` (`#67`); added TTL expiration and `refresh=True` invalidation to directory listing caches (`#68`); deprecated `save_products` and hardened `HEAD` checks (`#69`); relocated root scripts to `examples/`, converted root point tests to mocked unit tests (`#70`), and moved script-only packages to optional dependencies (`#71`). |
 | **`v2.24.0`** | 2026-11-17 | Added direct `netCDF4` reading (`_read_via_netcdf4`) and validation (`_validate_with_netcdf4`) fallbacks when `gdal_HDF5.so` is unavailable; fixed subprocess `ImportError` JSON serialization; added inter-process file locking (`_granule_file_lock`) and `albedo_visible`/`albedo_NIR` computed variables; set `requires-python = ">=3.11"`. |
 | **`v2.23.0`** | 2026-11-10 | Enabled `pooch` download progress bar display and added `examples/download_progress.py`. |

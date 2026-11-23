@@ -34,6 +34,7 @@ COMPUTED_DEPENDENCIES: Dict[str, List[str]] = {
     'Ea_Pa': ['Q', 'PS', 'Ta'],
     'VPD_kPa': ['Q', 'PS', 'Ta'],
     'Td_K': ['Q', 'PS', 'Ta'],
+    'Td_C': ['Q', 'PS', 'Ta'],
     'wind_speed_mps': ['U2M', 'V2M'],
     'PAR_proportion': ['ALBVISDR', 'ALBEDO'],
     'NIR_proportion': ['ALBNIRDR', 'ALBEDO'],
@@ -115,6 +116,12 @@ def _evaluate_computed_variable(var_name: str, data: Union[pd.DataFrame, gpd.Geo
         rh = _evaluate_computed_variable('RH', data)
         return ta_k - (100.0 - rh * 100.0) / 5.0
 
+    if var_name == 'Td_C':
+        td_k = _evaluate_computed_variable('Td_K', data)
+        if td_k is None:
+            return None
+        return td_k - 273.15
+
     if var_name == 'wind_speed_mps':
         if not {'U2M', 'V2M'}.issubset(data.columns):
             return None
@@ -171,7 +178,7 @@ def _apply_computed_columns(
             logger.warning(f"Failed to compute {var_name}: {e}")
             df[var_name] = None
 
-    cols_to_keep = {'geometry'} | set(requested_variables)
+    cols_to_keep = {'geometry', 'point_index'} | set(requested_variables)
     cols_to_drop = [col for col in df.columns if col not in cols_to_keep]
     if cols_to_drop:
         df = df.drop(columns=cols_to_drop)
@@ -243,6 +250,12 @@ def _resolve_single_raster_variable(
     **kwargs,
 ) -> Raster:
     """Retrieve a single Raster for a known, raw, or computed variable."""
+    if var_name in COMPUTED_VARIABLES and hasattr(conn, var_name):
+        return getattr(conn, var_name)(
+            time_UTC=time_UTC,
+            geometry=geometry,
+            resampling=resampling,
+        )
     if var_name in GEOS5FP_VARIABLES:
         return conn.variable(
             variable_name=var_name,
@@ -261,18 +274,47 @@ def _resolve_single_raster_variable(
             resampling=resampling,
             **kwargs,
         )
-    if var_name in COMPUTED_VARIABLES and hasattr(conn, var_name):
-        return getattr(conn, var_name)(
-            time_UTC=time_UTC,
-            geometry=geometry,
-            resampling=resampling,
-            **kwargs,
-        )
     raise ValueError(
         f"Dataset must be specified when using raw variable name '{var_name}'. "
         f"Known variables: {list(GEOS5FP_VARIABLES.keys())}. "
         f"Computed variables: {list(COMPUTED_VARIABLES)}"
     )
+
+
+def _fallback_single_point_via_interpolate(
+    conn,
+    var_name: str,
+    dataset: str,
+    target_time: datetime,
+    pt_lat: float,
+    pt_lon: float,
+    **kwargs,
+) -> float:
+    """Retrieve a single scalar point value via HTTP granule interpolation when OPeNDAP fails."""
+    if dataset is None:
+        if var_name in GEOS5FP_VARIABLES:
+            _, var_dataset, raw_variable = get_variable_info(var_name)
+        else:
+            raise ValueError(f"Dataset must be specified for raw variable '{var_name}'")
+    else:
+        var_dataset = dataset
+        if var_name in GEOS5FP_VARIABLES:
+            _, _, raw_variable = get_variable_info(var_name)
+        else:
+            raw_variable = var_name
+
+    interpolated = conn.interpolate(
+        time_UTC=target_time,
+        product=var_dataset,
+        variable=raw_variable,
+        geometry=Point(pt_lon, pt_lat),
+        resampling="nearest",
+        **kwargs,
+    )
+    val = float(np.asarray(interpolated).reshape(-1)[0])
+    if not np.isnan(val) and var_name in VARIABLE_TRANSFORMATIONS:
+        val = float(VARIABLE_TRANSFORMATIONS[var_name](val))
+    return val
 
 
 def query(
@@ -290,6 +332,7 @@ def query(
         temporal_interpolation: str = TEMPORAL_INTERPOLATION,
         variable_name: Union[str, List[str]] = None,
         variables: Union[str, List[str]] = None,
+        return_dict: bool = False,
         verbose: bool = False,
         **kwargs) -> Union[np.ndarray, Raster, Dict[str, Raster], gpd.GeoDataFrame]:
     """
@@ -374,14 +417,25 @@ def query(
             raise ValueError("For batch queries, time_UTC must be a list, tuple, Series, or array")
 
         if geometry is not None:
+            unwrapped_input_geom = geometry.geometry if hasattr(geometry, "geometry") else geometry
             if isinstance(geometry, gpd.GeoSeries):
                 geometries = geometry.tolist()
             elif isinstance(geometry, list):
                 geometries = geometry
+            elif isinstance(unwrapped_input_geom, MultiPoint):
+                pts = list(unwrapped_input_geom.geoms)
+                if len(pts) == len(times):
+                    geometries = pts
+                elif len(pts) == 1:
+                    geometries = [pts[0]] * len(times)
+                else:
+                    raise ValueError(
+                        f"Number of points in MultiPoint ({len(pts)}) must match number of times ({len(times)})"
+                    )
             elif is_point_geometry(geometry):
                 geometries = [geometry] * len(times)
             else:
-                raise ValueError("For batch queries with geometry, must provide GeoSeries, list, or single Point/MultiPoint")
+                raise ValueError("For batch queries with geometry, must provide GeoSeries, list, or Point/MultiPoint")
         elif lat is not None and lon is not None:
             lats = lat.tolist() if isinstance(lat, pd.Series) else (lat if isinstance(lat, list) else [lat])
             lons = lon.tolist() if isinstance(lon, pd.Series) else (lon if isinstance(lon, list) else [lon])
@@ -567,6 +621,7 @@ def query(
             )
 
         points = extract_points(geometry) if geometry is not None else [(lat, lon)]
+        multi_point = len(points) > 1
         base_variables, computed_variables = _expand_requested_variables(variable_names)
         all_variable_dfs = []
 
@@ -626,7 +681,7 @@ def query(
                         if verbose:
                             logger.warning(f"Failed to query chunk {chunk_start.date()} to {chunk_end.date()} for {var_name}: {e}")
             else:
-                for pt_lat, pt_lon in points:
+                for pt_idx, (pt_lat, pt_lon) in enumerate(points):
                     try:
                         result = query_geos5fp_point(
                             dataset=var_dataset,
@@ -643,6 +698,8 @@ def query(
                             df_point = df_point.rename(columns={variable_opendap: var_name})
                         if var_name in VARIABLE_TRANSFORMATIONS:
                             df_point[var_name] = VARIABLE_TRANSFORMATIONS[var_name](df_point[var_name])
+                        if multi_point:
+                            df_point['point_index'] = pt_idx
                         df_point['geometry'] = Point(pt_lon, pt_lat)
                         dfs.append(df_point)
                     except Exception as e:
@@ -652,16 +709,46 @@ def query(
             if not dfs:
                 continue
 
-            df_combined = pd.concat(dfs, axis=0).sort_index() if len(dfs) > 1 else dfs[0]
+            if len(dfs) > 1:
+                df_combined = pd.concat(dfs, axis=0)
+                if multi_point and 'point_index' in df_combined.columns:
+                    df_combined = df_combined.reset_index().sort_values(['point_index', 'time']).set_index('time')
+                else:
+                    df_combined = df_combined.sort_index()
+            else:
+                df_combined = dfs[0]
+
             all_variable_dfs.append(df_combined)
 
         if not all_variable_dfs:
-            return np.array([]) if single_variable else gpd.GeoDataFrame()
+            return np.array([]) if (single_variable and not multi_point) else gpd.GeoDataFrame()
 
         result_df = all_variable_dfs[0].copy()
         for var_df in all_variable_dfs[1:]:
-            var_cols = [c for c in var_df.columns if c != 'geometry']
-            if temporal_interpolation == "interpolate":
+            var_cols = [c for c in var_df.columns if c not in ('geometry', 'point_index')]
+            if multi_point and 'point_index' in result_df.columns and 'point_index' in var_df.columns:
+                merged_parts = []
+                for pt_idx, grp_left in result_df.groupby('point_index', sort=True):
+                    grp_right = var_df[var_df['point_index'] == pt_idx][var_cols]
+                    if temporal_interpolation == "interpolate":
+                        part = grp_left.merge(grp_right, left_index=True, right_index=True, how='outer')
+                        part['point_index'] = pt_idx
+                        part['geometry'] = grp_left['geometry'].iloc[0]
+                        for col in var_cols:
+                            if col in part.columns:
+                                part[col] = part[col].interpolate(method='time')
+                    else:
+                        part = pd.merge_asof(
+                            grp_left.sort_index(),
+                            grp_right.sort_index(),
+                            left_index=True,
+                            right_index=True,
+                            direction='nearest',
+                            tolerance=pd.Timedelta(hours=2)
+                        )
+                    merged_parts.append(part)
+                result_df = pd.concat(merged_parts, axis=0)
+            elif temporal_interpolation == "interpolate":
                 result_df = result_df.merge(var_df[var_cols], left_index=True, right_index=True, how='outer')
                 for col in var_cols:
                     if col in result_df.columns:
@@ -679,14 +766,15 @@ def query(
         result_gdf = gpd.GeoDataFrame(result_df, geometry='geometry', crs='EPSG:4326')
         result_gdf = _apply_computed_columns(result_gdf, variable_names, computed_variables)
 
-        if single_variable and len(variable_names) == 1 and variable_names[0] in result_gdf.columns:
+        if single_variable and not multi_point and len(variable_names) == 1 and variable_names[0] in result_gdf.columns:
             return result_gdf[variable_names[0]].values
 
         return result_gdf
 
     # Handle single-time point queries (Point or MultiPoint, no time_range)
     if time_UTC is not None and is_point_geometry(geometry) and time_range is None:
-        if not HAS_OPENDAP_SUPPORT:
+        allow_fallback = bool(self is not None and getattr(self, "allow_fallback", False))
+        if not HAS_OPENDAP_SUPPORT and not allow_fallback:
             raise ImportError(
                 "Point query support requires xarray and netCDF4. "
                 "Install with: conda install -c conda-forge xarray netcdf4"
@@ -719,35 +807,57 @@ def query(
             point_dfs = []
 
             for pt_lat, pt_lon in points:
-                try:
-                    result = query_geos5fp_point(
-                        dataset=var_dataset,
-                        variable=variable_opendap,
-                        lat=pt_lat,
-                        lon=pt_lon,
-                        time_range=(time_range_start, time_range_end),
-                        dropna=dropna
-                    )
-                    if len(result.df) == 0:
-                        logger.warning(f"No data found for point ({pt_lat}, {pt_lon}) at time {target_time}")
-                        continue
+                value = np.nan
+                opendap_succeeded = False
 
-                    value = _interpolate_series_at_time(
-                        result.df,
-                        variable_opendap,
-                        target_time,
-                        mode=temporal_interpolation,
-                    )
-                    if not np.isnan(value) and var_name in VARIABLE_TRANSFORMATIONS:
-                        value = VARIABLE_TRANSFORMATIONS[var_name](value)
+                if HAS_OPENDAP_SUPPORT:
+                    try:
+                        result = query_geos5fp_point(
+                            dataset=var_dataset,
+                            variable=variable_opendap,
+                            lat=pt_lat,
+                            lon=pt_lon,
+                            time_range=(time_range_start, time_range_end),
+                            dropna=dropna
+                        )
+                        if len(result.df) > 0:
+                            value = _interpolate_series_at_time(
+                                result.df,
+                                variable_opendap,
+                                target_time,
+                                mode=temporal_interpolation,
+                            )
+                            if not np.isnan(value) and var_name in VARIABLE_TRANSFORMATIONS:
+                                value = VARIABLE_TRANSFORMATIONS[var_name](value)
+                            opendap_succeeded = not np.isnan(value)
+                        else:
+                            logger.warning(f"No data found for point ({pt_lat}, {pt_lon}) at time {target_time}")
+                    except Exception as e:
+                        logger.warning(f"Failed to query {var_name} at ({pt_lat}, {pt_lon}): {e}")
 
-                    df_point = pd.DataFrame(
-                        {var_name: [value], 'geometry': [Point(pt_lon, pt_lat)]},
-                        index=pd.DatetimeIndex([target_time], name="time"),
-                    )
-                    point_dfs.append(df_point)
-                except Exception as e:
-                    logger.warning(f"Failed to query {var_name} at ({pt_lat}, {pt_lon}): {e}")
+                if not opendap_succeeded and allow_fallback:
+                    try:
+                        value = _fallback_single_point_via_interpolate(
+                            conn=self,
+                            var_name=var_name,
+                            dataset=var_dataset,
+                            target_time=target_time,
+                            pt_lat=pt_lat,
+                            pt_lon=pt_lon,
+                            **kwargs,
+                        )
+                        opendap_succeeded = not np.isnan(value)
+                    except Exception as fallback_err:
+                        logger.warning(f"Fallback interpolation failed for {var_name} at ({pt_lat}, {pt_lon}): {fallback_err}")
+
+                if not opendap_succeeded:
+                    continue
+
+                df_point = pd.DataFrame(
+                    {var_name: [value], 'geometry': [Point(pt_lon, pt_lat)]},
+                    index=pd.DatetimeIndex([target_time], name="time"),
+                )
+                point_dfs.append(df_point)
 
             if not point_dfs:
                 return np.array([]) if single_variable else gpd.GeoDataFrame()
@@ -777,7 +887,7 @@ def query(
             from .GEOS5FP_connection import GEOS5FPConnection
             conn = GEOS5FPConnection()
 
-        if single_variable:
+        if single_variable and not return_dict:
             return _resolve_single_raster_variable(
                 conn=conn,
                 var_name=variable_names[0],
