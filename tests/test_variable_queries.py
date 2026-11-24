@@ -199,6 +199,57 @@ class TestQueryBackwardCompatibility:
         with pytest.warns(DeprecationWarning, match="wind_speed\(\) is deprecated"):
             assert conn.wind_speed(time_UTC=datetime(2024, 11, 15, 12, 0), geometry=object()) == 4.5
 
+    def test_vapor_gccm_and_ozone_cm_raster_unit_conversions(self, conn, monkeypatch):
+        """Regression test for issue #83: gridded raster queries must apply unit scaling."""
+        raw_values = {
+            "TQV": np.array([[10.718, 25.0]], dtype=np.float64),
+            "TO3": np.array([[334.4433, 300.0]], dtype=np.float64),
+        }
+
+        def fake_interpolate(time_UTC, product, variable, geometry=None, **kwargs):
+            assert product == "inst3_2d_asm_Nx"
+            return raw_values[variable].copy()
+
+        monkeypatch.setattr(conn, "interpolate", fake_interpolate)
+
+        grid = object()
+        t = datetime(2026, 6, 2, 18, 0)
+
+        vapor_raster = conn.vapor_gccm(time_UTC=t, geometry=grid)
+        ozone_raster = conn.ozone_cm(time_UTC=t, geometry=grid)
+        vapor_kgsqm_raster = conn.vapor_kgsqm(time_UTC=t, geometry=grid)
+        ozone_dobson_raster = conn.ozone_dobson(time_UTC=t, geometry=grid)
+
+        np.testing.assert_allclose(vapor_raster, [[1.0718, 2.5]])
+        np.testing.assert_allclose(ozone_raster, [[0.3344433, 0.3]])
+        np.testing.assert_allclose(vapor_kgsqm_raster, [[10.718, 25.0]])
+        np.testing.assert_allclose(ozone_dobson_raster, [[334.4433, 300.0]])
+
+        multi_rasters = conn.query(
+            target_variables=["vapor_gccm", "ozone_cm"],
+            time_UTC=t,
+            geometry=grid,
+        )
+        np.testing.assert_allclose(multi_rasters["vapor_gccm"], [[1.0718, 2.5]])
+        np.testing.assert_allclose(multi_rasters["ozone_cm"], [[0.3344433, 0.3]])
+
+    def test_vapor_gccm_and_ozone_cm_point_query_no_double_scaling(self, conn):
+        """Ensure OPeNDAP point queries still apply unit scaling exactly once."""
+        target_time = datetime(2026, 6, 2, 18, 0)
+        point = Point(-118.25, 34.05)
+
+        def fake_point_query(dataset, variable, lat, lon, time_range, dropna=True):
+            raw = 10.718 if variable == "tqv" else 334.4433
+            df = pd.DataFrame({variable: [raw]}, index=[target_time])
+            return PointQueryResult(data=None, df=df, lat_used=lat, lon_used=lon, url="mock://opendap")
+
+        with patch("GEOS5FP.query.query_geos5fp_point", side_effect=fake_point_query):
+            vapor_pt = conn.vapor_gccm(time_UTC=target_time, geometry=point)
+            ozone_pt = conn.ozone_cm(time_UTC=target_time, geometry=point)
+
+        np.testing.assert_allclose(vapor_pt, [1.0718])
+        np.testing.assert_allclose(ozone_pt, [0.3344433])
+
     def test_multipoint_single_time_queries_all_points(self, conn):
         points = MultiPoint([(-118.25, 34.05), (-122.42, 37.77), (-73.99, 40.75)])
         target_time = datetime(2024, 11, 15, 12, 0)
@@ -304,8 +355,7 @@ class TestQueryBackwardCompatibility:
             "vapor_gccm", "ozone_cm"
         ]
 
-        with patch("GEOS5FP.query.query_geos5fp_point_multi", side_effect=fake_multi), \
-             patch("GEOS5FP.query.query_geos5fp_point", side_effect=fake_single):
+        with patch("GEOS5FP.query.query_geos5fp_point_multi", side_effect=fake_multi),              patch("GEOS5FP.query.query_geos5fp_point", side_effect=fake_single):
             out = conn.query(target_variables=all_vars, targets_df=targets)
 
         # Midpoint interpolation checks
