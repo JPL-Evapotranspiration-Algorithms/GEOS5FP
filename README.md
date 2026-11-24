@@ -11,7 +11,7 @@ NASA Jet Propulsion Laboratory 329G
 If you use the `GEOS5FP` Python package in your research or software, please cite it as:
 
 ```text
-Halverson, G. H. (2026). GEOS5FP: Near-real-time GEOS-5 FP near-surface meteorology in Python (Version 2.26.0) [Computer software]. NASA Jet Propulsion Laboratory. https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP
+Halverson, G. H. (2026). GEOS5FP: Near-real-time GEOS-5 FP near-surface meteorology in Python (Version 2.27.0) [Computer software]. NASA Jet Propulsion Laboratory. https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP
 ```
 
 **BibTeX:**
@@ -21,7 +21,7 @@ Halverson, G. H. (2026). GEOS5FP: Near-real-time GEOS-5 FP near-surface meteorol
   author       = {Halverson, Gregory H.},
   title        = {{GEOS5FP}: Near-real-time {GEOS-5 FP} near-surface meteorology in {Python}},
   year         = {2026},
-  version      = {2.26.0},
+  version      = {2.27.0},
   institution  = {NASA Jet Propulsion Laboratory},
   url          = {https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP}
 }
@@ -470,13 +470,14 @@ print("Unit transformations:", sorted(VARIABLE_TRANSFORMATIONS.keys()))
    Built `validate_GEOS5FP_NetCDF_file.py` with subprocess isolation (`_validate_in_subprocess`) and JSON IPC to prevent low-level C++ `SIGABRT`/segfault crashes in GDAL/HDF5 from terminating parent pipelines, and added `GEOS5FPSSLError` with multi-stage TLS fallback handling for NASA NCCS connections.
 4. **OPeNDAP Point Queries, Vectorized Tables & Computed Variables (`v2.0.0` – `v2.11.0`, Nov 2025 – Dec 2025):**
    Introduced `GEOS5FP_point.py` (`query_geos5fp_point` and `query_geos5fp_point_multi`) using `xarray` and `netCDF4` against NASA's OPeNDAP server, centralized variable definitions in `GEOS5FP/variables.csv`, implemented vectorized spatio-temporal batching (`targets_df`, coordinate grouping, `cluster_times`), added computed meteorological variables (`RH`, `Ta_C`, `Ea_Pa`, `SVP_Pa`, `VPD_kPa`, `Td_K`, `wind_speed_mps`, albedo proportions), added `pandas.Series` / `DatetimeIndex` / array `time_UTC` support, disabled remote CF decoding to prevent OPeNDAP hangs, and implemented 7-day temporal chunking for long time-series queries.
-5. **Query Modularization, Pooch Staged Downloads, GDAL Independence & Query Parity (`v2.12.0` – `v2.26.0`, Jan 2026 – Nov 2026):**
-   Extracted `query()` into `GEOS5FP/query.py`; standardized single-variable non-raster queries to return `numpy.ndarray`; fixed `tavg3` expected-hour intervals (`[1.5, 4.5, ..., 22.5]`); migrated downloads to `pooch.HTTPDownloader` with out-of-tree staging (`pooch.os_cache("GEOS5FP")` with read-only container fallback to `tempfile.gettempdir()`), atomic cross-device publication, and inter-process file locks (`_granule_file_lock`); added pure-`netCDF4` reading and validation fallbacks when GDAL's `gdal_HDF5.so` plugin is absent; and unified `MultiPoint` batch unpacking, `return_dict` gridded outputs, `allow_fallback` point interpolation, `Td_C`, and all 15 computed variables across all `.query()` modes.
+5. **Query Modularization, Pooch Staged Downloads, GDAL Independence & Query Parity (`v2.12.0` – `v2.27.0`, Jan 2026 – Nov 2026):**
+   Extracted `query()` into `GEOS5FP/query.py`; standardized single-variable non-raster queries to return `numpy.ndarray`; fixed `tavg3` expected-hour intervals (`[1.5, 4.5, ..., 22.5]`); migrated downloads to `pooch.HTTPDownloader` with out-of-tree staging (`pooch.os_cache("GEOS5FP")` with read-only container fallback to `tempfile.gettempdir()`), atomic cross-device publication, and inter-process file locks (`_granule_file_lock`); added pure-`netCDF4` reading and validation fallbacks when GDAL's `gdal_HDF5.so` plugin is absent; unified `MultiPoint` batch unpacking, `return_dict` gridded outputs, `allow_fallback` point interpolation, `Td_C`, and all 15 computed variables across all `.query()` modes; and restored `VARIABLE_TRANSFORMATIONS` (`vapor_gccm` `/ 10.0`, `ozone_cm` `/ 1000.0`) on gridded raster queries.
 
 ### Complete Release Log
 
 | Version | Date (UTC) | Summary |
 | :--- | :--- | :--- |
+| **`v2.27.0`** | 2026-11-23 | Applied `VARIABLE_TRANSFORMATIONS` in `GEOS5FPConnection.variable()` for raster / `interpolate()` results so `vapor_gccm()` (`TQV / 10.0` in $	ext{g cm}^{-2}$) and `ozone_cm()` (`TO3 / 1000.0` in $	ext{cm}$) apply unit conversions consistently across gridded raster and point queries (`#83`). |
 | **`v2.26.0`** | 2026-11-23 | Unpacked `MultiPoint` geometries in spatio-temporal batch `.query()` (`#74`); added writable `tempfile.gettempdir()` fallback when `pooch.os_cache()` is read-only (`#75`); added explicit `return_dict` option to `.query()` for gridded geometries (`#76`); honored `allow_fallback=True` on single-timestamp point `.query()` calls (`#77`); added `Td_C()` and computed `'Td_C'` (`#78`); routed `COMPUTED_VARIABLES` in `GEOS5FPConnection.variable()` (`#79`); added deprecated `wind_speed()` wrapper delegating to `wind_speed_mps()` (`#80`); and preserved `point_index` in `MultiPoint` `time_range` queries (`#81`). |
 | **`v2.25.0`** | 2026-11-23 | Unified single-element sequence & `variables=` alias handling on gridded geometries (`#60`); added multi-variable raster `dict[str, Raster]` returns (`#65`) and standalone `query()` raster support (`#66`); implemented all 14 `COMPUTED_VARIABLES` across batch, point, and time-series modes (`#61`, `#62`); applied `vapor_gccm` and `ozone_cm` unit transformations (`#63`) and linear temporal interpolation in batch queries (`#64`); scoped socket timeouts with thread locking and added retry backoff to `query_geos5fp_point_multi` (`#67`); added TTL expiration and `refresh=True` invalidation to directory listing caches (`#68`); deprecated `save_products` and hardened `HEAD` checks (`#69`); relocated root scripts to `examples/`, converted root point tests to mocked unit tests (`#70`), and moved script-only packages to optional dependencies (`#71`). |
 | **`v2.24.0`** | 2026-11-17 | Added direct `netCDF4` reading (`_read_via_netcdf4`) and validation (`_validate_with_netcdf4`) fallbacks when `gdal_HDF5.so` is unavailable; fixed subprocess `ImportError` JSON serialization; added inter-process file locking (`_granule_file_lock`) and `albedo_visible`/`albedo_NIR` computed variables; set `requires-python = ">=3.11"`. |

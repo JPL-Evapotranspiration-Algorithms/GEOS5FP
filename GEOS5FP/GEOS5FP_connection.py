@@ -710,6 +710,8 @@ class GEOS5FPConnection:
                 exclude_values=exclude_values,
                 cmap=cmap
             )
+            if variable_name in VARIABLE_TRANSFORMATIONS:
+                result = VARIABLE_TRANSFORMATIONS[variable_name](result)
             if clip_min is not None or clip_max is not None:
                 result = rt.clip(result, clip_min, clip_max)
             return result
@@ -727,6 +729,9 @@ class GEOS5FPConnection:
             exclude_values=exclude_values,
             cmap=cmap
         )
+
+        if variable_name in VARIABLE_TRANSFORMATIONS:
+            result = VARIABLE_TRANSFORMATIONS[variable_name](result)
 
         if clip_min is not None or clip_max is not None:
             result = rt.clip(result, clip_min, clip_max)
