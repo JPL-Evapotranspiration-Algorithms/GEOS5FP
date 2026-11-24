@@ -1,10 +1,10 @@
-# Comprehensive Development Plan: `GEOS5FP` (`v1.0.1` – `v2.26.0`)
+# Comprehensive Development Plan: `GEOS5FP` (`v1.0.1` – `v2.27.0`)
 
 **Author:** Gregory H. Halverson (NASA Jet Propulsion Laboratory)  
 **Repository:** [JPL-Evapotranspiration-Algorithms/GEOS5FP](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP)  
 **Date:** November 23, 2026  
-**Completed Milestones:** `v1.0.1` – `v2.25.0` (173 passing unit tests)  
-**Target Release:** `v2.26.0` (resolving GitHub Issues `#74`–`#81`)  
+**Completed Milestones:** `v1.0.1` – `v2.26.0` (182 passing unit tests)  
+**Target Release:** `v2.27.0` (resolving GitHub Issue `#83` and `fixing_coordinate_broadcasting` branch items)  
 
 ---
 
@@ -12,22 +12,22 @@
 
 The `GEOS5FP` Python package provides programmatic retrieval, spatio-temporal interpolation, empirical downscaling, and tabular extraction for NASA's **GEOS-5 Forward Processing (GEOS-5 FP)** near-real-time meteorological assimilation products.
 
-Across 43 releases from `v1.0.1` (July 2024) through `v2.25.0` (November 2026), `GEOS5FP` evolved from a monolithic raster download-and-interpolation script into a modular, multi-modal scientific data access engine supporting:
+Across 44 releases from `v1.0.1` (July 2024) through `v2.26.0` (November 2026), `GEOS5FP` evolved from a monolithic raster download-and-interpolation script into a modular, multi-modal scientific data access engine supporting:
 
 * **Gridded raster retrieval and empirical downscaling** via `rasters`, `netCDF4`, and GDAL
 * **High-throughput OPeNDAP point, multi-point, time-series, and batch table queries** via `xarray`, `netCDF4`, `pandas`, and `geopandas`
 * **Automatic evaluation of derived meteorological variables** across gridded, point, time-series, and batch modes
-* **Subprocess-isolated NetCDF4 validation, inter-process file locking, and out-of-tree Pooch staged downloads** resilient to C++ library crashes, missing GDAL HDF5 plugins, and cloud-synced filesystems (OneDrive/Google Drive)
+* **Subprocess-isolated NetCDF4 validation, inter-process file locking, and out-of-tree Pooch staged downloads** resilient to C++ library crashes, missing GDAL HDF5 plugins, read-only container filesystems, and cloud-synced directories (OneDrive/Google Drive)
 
-Integration testing across downstream repositories (`ECOv003-L3T-L4T-JET v1.23.0` and `JET3 v3.2.0`) identified eight remaining spatial-query edge cases, container filesystem constraints, and API parity items (`#74`–`#81`), which form the target scope for **`v2.26.0`**.
+End-to-end Collection 3 granule validation in `ECOv003-L3T-L4T-JET v1.23.0` (`JET3 v3.3.0`, `FLiESANN v2.13.1`) uncovered a critical unit-conversion regression on gridded raster queries (`#83`), which forms the primary target scope for **`v2.27.0`**.
 
 ---
 
-## Part I: Completed Development History (`v1.0.1` – `v2.24.0`)
+## Part I: Completed Development History (`v1.0.1` – `v2.25.0`)
 
 ### Era 1: Monolithic Prototype & Initial PyPI Release (`v1.0.1` – `v1.0.7`, June 2024 – March 2025)
 
-* **`v1.0.1` (2024-07-20):** Initial PyPI release (`geos5fp`), containing a 1,774-line `geos5fp/geos5fp.py` module and `geos5fp/downscaling/downscaling.py` implementing HTTP directory scraping (`BeautifulSoup`), `wget` downloads, linear temporal interpolation (`before_and_after` / `interpolate`), and empirical spatial downscaling (`linear_downscale`, `bias_correct`, `downscale_air_temperature`, `downscale_soil_moisture`, `downscale_vapor_pressure_deficit`, and `downscale_relative_humidity`).
+* **`v1.0.1` (2024-07-20):** Initial PyPI release (`geos5fp`), containing `geos5fp/geos5fp.py` and `geos5fp/downscaling/downscaling.py` implementing HTTP directory scraping (`BeautifulSoup`), `wget` downloads, linear temporal interpolation (`before_and_after` / `interpolate`), and empirical spatial downscaling (`linear_downscale`, `bias_correct`, `downscale_air_temperature`, `downscale_soil_moisture`, `downscale_vapor_pressure_deficit`, and `downscale_relative_humidity`).
 * **`v1.0.2` – `v1.0.7` (2025-02-26 – 2025-03-10):** Modularized the package into `GEOS5FPConnection`, `GEOS5FPGranule`, `HTTP_listing`, `constants`, `exceptions`, and `Timer`; fixed relative imports; configured GitHub Actions CI; and documented `wget` installation via `brew`/`mamba`.
 
 ### Era 2: Local Cache Simplification, Uppercase Rebranding & Pure-Python Downloads (`v1.1.1` – `v1.2.4`, March 2025 – October 2025)
@@ -45,92 +45,70 @@ Integration testing across downstream repositories (`ECOv003-L3T-L4T-JET v1.23.0
 * **`v2.0.0` – `v2.1.0` (2025-11-24 – 2025-11-25):** Introduced `GEOS5FP_point.py` (`query_geos5fp_point`, `query_geos5fp_point_multi`) using `xarray` and `netCDF4` against NASA's OPeNDAP server (`opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/assim`); centralized variable mappings into `GEOS5FP/variables.csv`; implemented vectorized spatio-temporal batching (`targets_df`, coordinate grouping, `cluster_times`); added derived meteorological variables (`RH`, `Ta_C`, `Ea_Pa`, `SVP_Pa`, `VPD_kPa`, `Td_K`); set default downsampling to `lanczos`; and established a comprehensive `pytest` suite.
 * **`v2.3.0` – `v2.11.0` (2025-11-25 – 2025-12-30):** Added elapsed time and ETA progress tracking; disabled xarray CF decoding/locking on remote OPeNDAP datasets; added socket timeouts and retry backoff; added `Ca` alias, `wind_speed_mps`, and albedo proportion factors; added `pandas.Series` / `DatetimeIndex` / array `time_UTC` support; and implemented 7-day temporal chunking for long single-point time-series queries.
 
-### Era 5: Query Modularization, Pooch Staged Downloads & GDAL Independence (`v2.12.0` – `v2.24.0`, December 2025 – November 2026)
+### Era 5: Query Modularization, Pooch Staged Downloads, GDAL Independence & Query Parity (`v2.12.0` – `v2.25.0`, December 2025 – November 2026)
 
 * **`v2.12.0` – `v2.21.0` (2026-01-02 – 2026-10-12):** Extracted `query()` into `GEOS5FP/query.py`; standardized single-variable non-raster queries to return `numpy.ndarray`; added unwrapping for `rasters` point geometry wrappers; added `Tmin_C`, `PAR_albedo`, and `NIR_albedo`; restored single-time raster snapshot routing; and fixed default `expected_hours` (`[1.5, 4.5, ..., 22.5]`) for 3-hourly `tavg3` products.
 * **`v2.22.0` – `v2.23.0` (2026-11-10):** Replaced custom `requests` chunk loops and removed `GEOS5FP/download_file.py` in favor of `pooch.HTTPDownloader` with per-attempt temporary staging under `pooch.os_cache("GEOS5FP")` (outside cloud-synced `download_directory` paths), atomic cross-device publication (`_publish_staged_file`), verified HTTPS, and progress bars.
 * **`v2.24.0` (2026-11-17):** Switched primary NetCDF validation to `netCDF4.Dataset` (`_validate_with_netcdf4`) and added `GEOS5FPGranule._read_via_netcdf4` fallback so valid `.nc4` granules load reliably even when GDAL's `gdal_HDF5.so` plugin is absent; fixed subprocess `ImportError` JSON serialization; added inter-process file locking (`_granule_file_lock`); registered `albedo_visible` and `albedo_NIR`; and set minimum Python support to `>=3.11`.
+* **`v2.25.0` (2026-11-23):** Resolved `#60`–`#71` (unified 1-element sequences and `variables=` alias on gridded geometries; added `dict[str, Raster]` multi-variable raster returns and standalone `query()` raster support; implemented all 14 `COMPUTED_VARIABLES` and OPeNDAP unit scaling; added linear temporal interpolation in batch queries; added socket timeout locking, retry backoff on `query_geos5fp_point_multi`, and TTL cache expiration; trimmed runtime dependencies and relocated scripts to `examples/`).
 
 ---
 
-## Part II: Completed Stabilization & Feature-Parity Release (`v2.25.0`, November 23, 2026)
+## Part II: Completed Spatial Query & Container Resilience Release (`v2.26.0`, November 23, 2026)
 
-Version `2.25.0` resolved all **12 tracked GitHub issues (`#60`–`#71`)** across four coordinated workstreams, verified with **173 passing unit tests** on Python 3.14:
+Version `2.26.0` resolved all **8 tracked GitHub issues (`#74`–`#81`)** across four workstreams, verified with **182 passing unit tests** on Python 3.14:
 
-1. **Query Routing, Single-Element Sequences & Multi-Variable Rasters (`#60`, `#65`, `#66`):** Accepted `variables` as an alias, unwrapped 1-element sequences (`len(variable_names) == 1`) on gridded geometries to return `Raster` objects, returned `dict[str, Raster]` for multi-variable raster queries, and enabled standalone `query()` raster calls.
-2. **Complete Computed Variables, Unit Scaling & Temporal Interpolation (`#61`, `#62`, `#63`, `#64`):** Added `Tmin_C`, `vapor_gccm` (`/ 10.0`), and `ozone_cm` (`/ 1000.0`) transformations across all OPeNDAP query modes; implemented all 14 `COMPUTED_VARIABLES` across batch, time-series, and single-time point modes; and added linear temporal interpolation (`_interpolate_series_at_time`) in batch and single-point queries.
-3. **Network Resilience, Thread Safety & Cache Invalidation (`#67`, `#68`, `#69`):** Guarded `socket.setdefaulttimeout()` with a `threading.Lock` and `try...finally` restoration, added retry/backoff to `query_geos5fp_point_multi()`, added TTL expiration and `refresh=True` invalidation to `GEOS5FPConnection._listings`, deprecated `save_products`, and routed `HEAD` checks through `create_robust_session()`.
-4. **Repository Hygiene, Dependency Trimming & Test Coverage (`#70`, `#71`):** Moved `ECOv002-calval-tables` and `sentinel-tiles` to `[project.optional-dependencies] examples`, removed unused `pytictoc` and `dask` runtime dependencies, relocated root scripts to `examples/`, converted root point tests to mocked unit tests, and updated `README.md` and `makefile`.
-
----
-
-## Part III: Target Development Plan for `v2.26.0` (Issues `#74`–`#81`)
-
-Integration testing across `ECOv003-L3T-L4T-JET v1.23.0` and `JET3 v3.2.0` identified **8 concrete updates (`#74`–`#81`)** to resolve in `GEOS5FP v2.26.0` across four workstreams.
-
-### Workstream 1: Spatial & Tabular `.query()` Correctness (`#74`, `#76`, `#77`, `#81`)
-**Primary File:** `GEOS5FP/query.py`
-
-1. **Issue [#74](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/74) (Critical) — Unpack `MultiPoint` Geometries in Spatio-Temporal Batch `.query()`:**
-   * **Root Cause:** When `JET3.process_JET_table()` runs in online mode (`offline_mode=False`), it passes a single `rasters.MultiPoint` of length $N$ (`geometry = MultiPoint(coords, crs=WGS84)`) alongside a `list` of $N$ timestamps (`time_UTC`). Because `is_point_geometry(geometry)` is `True`, `query()` broadcasts `[geometry] * len(times)` and extracts `unwrapped_geom.geoms[0]` for every row—silently querying the first point's coordinates for all $N$ timestamps.
-   * **Fix:** When `unwrapped_input_geom` is a `MultiPoint`, unpack `pts = list(unwrapped_input_geom.geoms)`:
-     * If `len(pts) == len(times)`: set `geometries = pts`.
-     * Else if `len(pts) == 1`: broadcast `geometries = [pts[0]] * len(times)`.
-     * Else: raise `ValueError(f"Number of points in MultiPoint ({len(pts)}) must match number of times ({len(times)})")`.
-
-2. **Issue [#76](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/76) (High) — Explicit `return_dict` Option on Gridded `.query()`:**
-   * **Root Cause:** On gridded geometries (`RasterGrid` / `RasterGeometry`), `query(variables=["CO2SC", "Ta_K"], ...)` returns `dict[str, Raster]`, whereas `query(variables=["CO2SC"], ...)` returns a `rasters.Raster` (whose `.keys` attribute is `None`), causing callers that call `.keys()` on the result to fail with `TypeError: 'NoneType' object is not callable`.
-   * **Fix:** Add `return_dict: bool = False` to `query()`. Keep `return_dict=False` as the default so 1-element sequences return a `Raster`, and return `{var_name: raster}` when `return_dict=True` regardless of variable count.
-
-3. **Issue [#77](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/77) (Medium) — Honor `allow_fallback=True` on Single-Timestamp Point Queries:**
-   * **Root Cause:** `GEOS5FPConnection.variable()` catches OPeNDAP failures and falls back to `self.interpolate(...)` when `self.allow_fallback` is `True`, whereas the single-timestamp point branch in `GEOS5FP/query.py` logs a warning and returns empty results without checking `conn.allow_fallback`.
-   * **Fix:** When `query_geos5fp_point` raises an exception or returns empty data and `conn is not None and getattr(conn, "allow_fallback", False)` is `True`, fall back to `conn.interpolate(...)` and apply `VARIABLE_TRANSFORMATIONS`.
-
-4. **Issue [#81](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/81) (Low) — Preserve Point Identity in `MultiPoint` `time_range` Queries:**
-   * **Root Cause:** When `time_range=(start, end)` is queried with a `MultiPoint` of $M > 1$ locations and `single_variable=True`, `all_variable_dfs` concatenates each point's series and sorts by timestamp—returning an unlabeled 1D `np.ndarray` of length $M \times T$ with rows interleaved across points.
-   * **Fix:** Attach a `point_index` column and return the time-indexed `GeoDataFrame` containing `geometry` whenever `len(points) > 1` so multi-point time-series results remain unambiguous.
+1. **Spatial & Tabular `.query()` Correctness (`#74`, `#76`, `#77`, `#81`):**
+   * Unpacked `MultiPoint` geometries in spatio-temporal batch `.query()` (`pts = list(unwrapped_input_geom.geoms)`) and validated length parity against `time_UTC` (`#74`).
+   * Added explicit `return_dict: bool = False` option to `.query()` for gridded geometries so callers can reliably request `dict[str, Raster]` regardless of variable count (`#76`).
+   * Honored `allow_fallback=True` on single-timestamp point `.query()` calls via `_fallback_single_point_via_interpolate()` (`#77`).
+   * Preserved `point_index` and returned a `GeoDataFrame` in `MultiPoint` `time_range` queries (`#81`).
+2. **Read-Only Container Staging Resilience (`#75`):**
+   * Added `_resolve_staging_root()` in `GEOS5FP_connection.py` to fall back from `pooch.os_cache("GEOS5FP")` to `Path(tempfile.gettempdir()) / "GEOS5FP_cache"` when `$HOME` is mounted read-only in HPC/Apptainer containers (`#75`).
+3. **SI Unit & Backward-Compatible Method Parity (`#78`, `#79`, `#80`):**
+   * Added `GEOS5FPConnection.Td_C()` and registered `'Td_C'` in `COMPUTED_VARIABLES` and `COMPUTED_DEPENDENCIES` (`#78`).
+   * Routed `COMPUTED_VARIABLES` inside `GEOS5FPConnection.variable()` before calling `get_variable_info()` (`#79`).
+   * Added deprecated `GEOS5FPConnection.wind_speed()` wrapper delegating to `wind_speed_mps()` (`#80`).
 
 ---
 
-### Workstream 2: Container & Read-Only Filesystem Resilience (`#75`)
-**Primary File:** `GEOS5FP/GEOS5FP_connection.py`
+## Part III: Target Development Plan for `v2.27.0` (Issue `#83` & Branch `fixing_coordinate_broadcasting`)
 
-5. **Issue [#75](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/75) (High) — Writable Fallback for Pooch Staging Root in Read-Only Containers:**
-   * **Root Cause:** `download_file()` stages streamed HTTP chunks inside `pooch.os_cache("GEOS5FP")` (`~/.cache/GEOS5FP`), which raises `PermissionError` (mapped to `FailedGEOS5FPDownload`) in Apptainer/Singularity containers on HPC nodes where `$HOME` (`/root`) is mounted read-only.
-   * **Fix:** Add `_resolve_staging_root(download_root: Path) -> Path` to probe `pooch.os_cache("GEOS5FP")` first and fall back to `Path(tempfile.gettempdir()) / "GEOS5FP_cache"` when `pooch.os_cache` cannot be created or is not writable.
-
----
-
-### Workstream 3: SI Unit & Backward-Compatible Method Parity (`#78`, `#79`, `#80`)
+### Workstream 1: Gridded Raster Unit Transformation Fix (`#83` — Critical)
 **Primary Files:** `GEOS5FP/GEOS5FP_connection.py`, `GEOS5FP/constants.py`, `GEOS5FP/query.py`
 
-6. **Issue [#78](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/78) (Medium) — Add `Td_C()` Method and Register `Td_C` in `COMPUTED_VARIABLES`:**
-   * **Fix:** Implement `GEOS5FPConnection.Td_C(self, time_UTC, geometry=None, resampling=None) -> Raster` (`self.Td_K(...) - 273.15`), register `'Td_C'` in `COMPUTED_VARIABLES` (`GEOS5FP/constants.py`) and `COMPUTED_DEPENDENCIES` (`'Td_C': ['Q', 'PS', 'Ta']`), and evaluate `'Td_C'` in `_evaluate_computed_variable` (`GEOS5FP/query.py`).
-
-7. **Issue [#79](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/79) (Medium) — Route `COMPUTED_VARIABLES` Inside `GEOS5FPConnection.variable()`:**
-   * **Fix:** Check `if variable_name in COMPUTED_VARIABLES and hasattr(self, variable_name):` at the start of `GEOS5FPConnection.variable()` and delegate to `getattr(self, variable_name)(time_UTC=time_UTC, geometry=geometry, resampling=resampling)` instead of raising `KeyError`.
-
-8. **Issue [#80](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/80) (Low) — Deprecated `wind_speed()` Compatibility Wrapper:**
-   * **Fix:** Add `GEOS5FPConnection.wind_speed(...)` emitting a `DeprecationWarning` and delegating to `self.wind_speed_mps(...)` so external scripts/notebooks using the pre-`v2.24.0` method name continue working cleanly.
+* **Issue [#83](https://github.com/JPL-Evapotranspiration-Algorithms/GEOS5FP/issues/83) — Restore Unit Conversions for `vapor_gccm` and `ozone_cm` on Gridded Raster Queries:**
+  * **Root Cause:** `VARIABLE_TRANSFORMATIONS` in `GEOS5FP/constants.py` defines `'vapor_gccm': lambda x: x / 10.0` ($\text{kg m}^{-2} \rightarrow \text{g cm}^{-2}$) and `'ozone_cm': lambda x: x / 1000.0` ($\text{DU} \rightarrow \text{cm}$ / $\text{atm-cm}$). However, `VARIABLE_TRANSFORMATIONS` is currently applied only in `GEOS5FP/query.py` (OPeNDAP point/batch paths) and `GEOS5FPConnection._query_point_via_opendap()`. When `GEOS5FPConnection.vapor_gccm()` or `GEOS5FPConnection.ozone_cm()` is called with a gridded `RasterGeometry` (or `geometry=None`), `.query()` routes through `GEOS5FPConnection.variable()` $\rightarrow$ `GEOS5FPConnection.interpolate()`, returning raw `TQV` ($10\times$ too high) and raw `TO3` ($1000\times$ too high).
+  * **Downstream Impact:** Verified on ECOSTRESS Collection 3 granule `orbit=44841, scene=001, tile=11SPS` (`2026-06-02T18:00:12Z`): unscaled `vapor_gccm` (`10.7180` vs. `1.0718 g/cm²`) and `ozone_cm` (`334.4433` vs. `0.3344 cm`) shifted `FLiESANN` `SWin_Wm2` (`Rg` in `L3T_ETAUX`) by `+74.35 W/m²` (`RMSE = 74.757 W/m²`, $r = 0.38894$); applying `/ 10.0` and `/ 1000.0` restores agreement with public Collection 3 (`RMSE = 0.527 W/m²`, `Bias = -0.023 W/m²`, $r = 0.99859$).
+  * **Fix:**
+    1. Apply `VARIABLE_TRANSFORMATIONS[variable_name]` in `GEOS5FPConnection.variable()` for raster / `interpolate()` results (immediately after `self.interpolate(...)` and before `clip_min` / `clip_max` clipping), ensuring transformations run exactly once on raster queries without double-applying on `_query_point_via_opendap()` or `query.py` OPeNDAP paths.
+    2. Audit all SI-suffixed methods (`Ta_C`, `Tmin_C`, `Td_C`, `Td_K`, `Ta_K`, `Ts_K`, `Tmin_K`, `wind_speed_mps`, `vapor_gccm`, `vapor_kgsqm`, `ozone_cm`, `ozone_dobson`, `SWin`, `SWTDN`, `AOT`, `COT`, `SM`, `PS`, `Q`, `RH`, `VPD_kPa`, `Ea_Pa`, `SVP_Pa`, `SVP_kPa`, and albedo variables) to guarantee identical physical units across raster, point, time-series, and batch queries.
 
 ---
 
-### Workstream 4: Unit Testing & Downstream Rollout (`v2.26.0`)
+### Workstream 2: Coordinate Broadcasting Hardening (`fixing_coordinate_broadcasting` Branch)
+**Primary Files:** `GEOS5FP/query.py`, `GEOS5FP/GEOS5FP_connection.py`
+
+* **Audit & Finalize Spatio-Temporal Broadcasting Edge Cases:**
+  * Verify `MultiPoint`, `GeoSeries`, `list` of `Point`s, scalar `Point`, and `lat`/`lon` sequence broadcasting across both `GEOS5FPConnection.query()` and `GEOS5FPConnection.variable()` when `time_UTC` is passed as a `list`, `tuple`, `np.ndarray`, `pd.Series`, or `pd.DatetimeIndex`.
+  * Ensure zero untracked helper scripts remain in the working tree before tagging `v2.27.0`.
+
+---
+
+### Workstream 3: Unit Regression Tests & Downstream Rollout (`v2.27.0`)
 
 | Test Function | Target File | Issues Covered | Verification Criteria |
 | :--- | :--- | :--- | :--- |
-| `test_batch_query_multipoint_unpacks_distinct_coordinates` | `tests/test_variable_queries.py` | `#74` | Passing a 3-point `MultiPoint` with 3 timestamps queries 3 distinct `(lat, lon)` coordinates rather than repeating `geoms[0]`. |
-| `test_batch_query_multipoint_length_mismatch_raises` | `tests/test_variable_queries.py` | `#74` | Passing a 2-point `MultiPoint` with 3 timestamps raises `ValueError`. |
-| `test_download_staging_falls_back_when_os_cache_readonly` | `tests/test_connection_download.py` | `#75` | Mocking `pooch.os_cache` to a non-writable path redirects staging to `tempfile.gettempdir()` without raising `FailedGEOS5FPDownload`. |
-| `test_query_return_dict_on_single_raster_variable` | `tests/test_variable_queries.py` | `#76` | `conn.query(variables=["CO2SC"], geometry=grid, return_dict=True)` returns `{"CO2SC": sentinel}` while `return_dict=False` returns `sentinel`. |
-| `test_single_point_query_allow_fallback_uses_interpolate` | `tests/test_point_queries.py` | `#77` | When OPeNDAP raises `TimeoutError` and `allow_fallback=True`, `conn.query("Ta_K", time_UTC=..., geometry=Point(...))` falls back to `conn.interpolate()`. |
-| `test_td_c_method_and_computed_variable` | `tests/test_variable_queries.py` | `#78` | `conn.Td_C(...)` and `conn.query(["Td_C"], ...)` equal `Td_K - 273.15` across raster, point, and batch queries. |
-| `test_variable_method_routes_computed_variables` | `tests/test_variable_queries.py` | `#79` | `conn.variable("wind_speed_mps", ...)` and `conn.variable("Ta_C", ...)` succeed without raising `KeyError`. |
-| `test_wind_speed_deprecated_alias` | `tests/test_variable_queries.py` | `#80` | `conn.wind_speed(...)` emits `DeprecationWarning` and delegates to `conn.wind_speed_mps(...)`. |
-| `test_multipoint_time_range_preserves_point_index` | `tests/test_point_queries.py` | `#81` | `time_range` query with a 2-point `MultiPoint` returns a `GeoDataFrame` with `point_index` distinguishing each point's series. |
+| `test_vapor_gccm_and_ozone_cm_raster_unit_conversions` | `tests/test_variable_queries.py` | `#83` | Mocking `conn.interpolate()` to return raw `TQV = 10.718` and `TO3 = 334.443`, verify `conn.vapor_gccm(geometry=grid)` returns `1.0718` ($\text{g cm}^{-2}$) and `conn.ozone_cm(geometry=grid)` returns `0.3344433` ($\text{cm}$). |
+| `test_vapor_gccm_and_ozone_cm_query_raster_and_point_parity` | `tests/test_variable_queries.py` | `#83` | Verify `conn.query(["vapor_gccm", "ozone_cm"], geometry=grid)` and `conn.query(["vapor_gccm", "ozone_cm"], geometry=Point(...))` return consistent physical values (`TQV / 10.0` and `TO3 / 1000.0`) without double-scaling. |
+| `test_all_si_variables_unit_consistency` | `tests/test_variable_queries.py` | `#83` | Verify unit-converted variables (`Ta_C`, `Tmin_C`, `Td_C`, `vapor_gccm`, `ozone_cm`) produce matching physical ranges across `.variable()`, `.query()` raster, and `.query()` point modes. |
 
 ### Downstream Rollout Sequence
 
-1. **Release `GEOS5FP v2.26.0`:** Implement `#74`–`#81`, run `pytest -vv`, bump `pyproject.toml` to `2.26.0`, update `README.md`, tag `v2.26.0`, and publish to PyPI.
-2. **Release `BESS-JPL` patch (if needed):** Guard `retrieve_BESS_JPL_GEOS5FP_inputs.py` or pass `return_dict=True` when calling `GEOS5FP_connection.query()`.
-3. **Finalize `ECOv003-L3T-L4T-JET v1.23.0`:** Pin `GEOS5FP~=2.26.0` and `JET3~=3.2.0` in `ECOv003-L3T-L4T-JET/pyproject.toml` and verify with `make test`, `make smoke-test`, and `make docker-smoke-test`.
+1. **Release `GEOS5FP v2.27.0`:** Implement `#83` and any remaining `fixing_coordinate_broadcasting` tests, run `pytest -vv`, bump `pyproject.toml` to `2.27.0`, update `README.md`, tag `v2.27.0`, and publish to PyPI.
+2. **Release `JET3 v3.3.0`:** Keep `BIAS_CORRECT_FLIES_ANN = False` as the default in `JET3/constants.py` (while retaining the `bias_correct_FLiES_ANN` keyword parameter on `JET()`), and optionally emit a defensive warning if `np.nanmean(ozone_cm) > 5.0` or `np.nanmean(vapor_gccm) > 15.0`.
+3. **Update `ECOv003-L3T-L4T-JET v1.23.0`:**
+   * Pin `"GEOS5FP>=2.27.0"` in `ECOv003-L3T-L4T-JET/pyproject.toml`.
+   * Ensure `BIAS_CORRECT_FLIES_ANN = False` in `ECOv003_L3T_L4T_JET/constants.py`.
+   * Add physical unit-range assertions (`vapor_gccm < 10.0` and `ozone_cm < 1.0`) in `ECOv003_L3T_L4T_JET/smoke_test.py` and `tests/test_docker_smoke.py`.
+   * Re-run `examples/example_L3T_L4T_JET_run_with_download.py` on `orbit=44841, scene=001, tile=11SPS` (`2026-06-02T18:00:12Z`) to confirm `MATCH` across `L3T_JET`, `L3T_ETAUX`, `L4T_ESI`, and `L4T_WUE`.
